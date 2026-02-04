@@ -279,16 +279,16 @@ async def chat_completions(request: ChatCompletionRequest):
                 response_text = await find_surveys_near_average(tolerance=0.3, limit=10)
             else:
                 # Check for extreme value queries FIRST (before specific survey ID)
-                if any(word in user_lower for word in ['najniżs', 'najgorsz', 'najsłabs']):
-                    # Check if asking for list (10, lista, etc)
-                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'pokaż', 'pokaz']):
+                if any(word in user_lower for word in ['najniż', 'najgorsz', 'najsłab', 'najgorsze', 'najsłabsze']):
+                    # Check if asking for list (10, lista, listę, podaj, pokaż, etc)
+                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'podaj', 'pokaż', 'pokaz', 'wypisz', 'wyświetl']):
                         response_text = await find_lowest_surveys(10)
                     else:
                         # Query for single lowest score
                         response_text = await find_extreme_survey(find_max=False)
-                elif any(word in user_lower for word in ['najwyżs', 'najleps', 'najlepiej']):
-                    # Check if asking for list (10, lista, etc)
-                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'pokaż', 'pokaz']):
+                elif any(word in user_lower for word in ['najwyż', 'najlep', 'najlepsze']):
+                    # Check if asking for list (10, lista, listę, podaj, pokaż, etc)
+                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'podaj', 'pokaż', 'pokaz', 'wypisz', 'wyświetl']):
                         response_text = await find_highest_surveys(10)
                     else:
                         # Query for single highest score
