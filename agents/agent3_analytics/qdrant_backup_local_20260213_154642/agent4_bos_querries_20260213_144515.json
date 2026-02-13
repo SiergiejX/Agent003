@@ -1,0 +1,18 @@
+{
+  "collection_name": "agent4_bos_querries",
+  "export_timestamp": "2026-02-13T14:45:15.321436",
+  "total_points": 0,
+  "collection_info": {
+    "status": "green",
+    "vectors_count": 0,
+    "config": {
+      "params": {
+        "vectors": {
+          "size": 768,
+          "distance": "Cosine"
+        }
+      }
+    }
+  },
+  "points": []
+}

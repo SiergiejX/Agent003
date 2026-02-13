@@ -1,0 +1,50 @@
+{
+  "export_date": "2026-02-13T14:45:15.321759",
+  "source_host": "qdrant:6333",
+  "collections": [
+    {
+      "collection": "agent1_conversations",
+      "points": 28,
+      "filename": "qdrant_export/agent1_conversations_20260213_144514.json",
+      "size_mb": 0.4537382125854492,
+      "success": true
+    },
+    {
+      "collection": "agent1_turns",
+      "points": 143,
+      "filename": "qdrant_export/agent1_turns_20260213_144514.json",
+      "size_mb": 2.3190221786499023,
+      "success": true
+    },
+    {
+      "collection": "BazaWiedzy",
+      "points": 42,
+      "filename": "qdrant_export/BazaWiedzy_20260213_144515.json",
+      "size_mb": 0.9926509857177734,
+      "success": true
+    },
+    {
+      "collection": "agent2_tickets",
+      "points": 1,
+      "filename": "qdrant_export/agent2_tickets_20260213_144515.json",
+      "size_mb": 0.016531944274902344,
+      "success": true
+    },
+    {
+      "collection": "agent3_analitics",
+      "points": 2,
+      "filename": "qdrant_export/agent3_analitics_20260213_144515.json",
+      "size_mb": 0.03244972229003906,
+      "success": true
+    },
+    {
+      "collection": "agent4_bos_querries",
+      "points": 0,
+      "filename": "qdrant_export/agent4_bos_querries_20260213_144515.json",
+      "size_mb": 0.00032711029052734375,
+      "success": true
+    }
+  ],
+  "total_points": 216,
+  "total_size_mb": 3.8147201538085938
+}

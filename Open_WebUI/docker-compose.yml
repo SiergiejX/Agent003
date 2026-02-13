@@ -13,6 +13,12 @@ services:
       # Dodaj agent3_analytics jako dodatkowy model
       - OPENAI_API_BASE_URLS=http://agent3_analytics:8000/v1
       - OPENAI_API_KEYS=dummy
+      # Wyłącz automatyczne tagowanie używające zewnętrznych modeli
+      - ENABLE_ADMIN_CHAT_ACCESS=true
+      - ENABLE_ADMIN_EXPORT=true
+      # Użyj phi3:mini do generowania tytułów, nie agent3
+      - TASK_MODEL=phi3:mini
+      - TASK_MODEL_EXTERNAL=phi3:mini
 
     volumes:
       - open_webui_data:/app/backend/data

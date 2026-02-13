@@ -1,926 +1,471 @@
 import os
-import sys
+from fastapi import FastAPI, Header
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from langchain_ollama import ChatOllama
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointStruct
+from typing import Dict, Any, List, Optional
 import json
 import hashlib
-import logging
-from pathlib import Path
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from langchain_community.chat_models import ChatOllama
 import time
 import uuid
-from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, Distance, VectorParams, Filter, FieldCondition, MatchValue
-
-logger = logging.getLogger("uvicorn")
-
-# Add surveys module to path
-SURVEYS_DIR = Path(__file__).parent / "surveys"
-STATIC_DIR = Path(__file__).parent / "static"
-sys.path.insert(0, str(SURVEYS_DIR))
+from datetime import datetime
 
 app = FastAPI()
 
-# Mount static files for survey HTML
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-    print(f"✓ Static files mounted at /static")
-
-# Enable CORS for frontend requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-llm = ChatOllama(model="tinyllama", base_url="http://ollama:11434")
-
-COLLECTION = os.getenv("COLLECTION", "survey_responses")
-QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-EMBEDDING_DIM = 128
-
-# Initialize Qdrant client
-try:
-    qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-    print(f"✓ Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
-except Exception as e:
-    print(f"✗ Failed to connect to Qdrant: {e}")
-    qdrant_client = None
-
-# Pydantic models for survey data
-class SurveyResponse(BaseModel):
-    response_id: str
-    timestamp: str
-    student_id: str
-    student_email: Optional[str] = None
-    album_number: Optional[str] = None
-    q1_goal: Optional[str] = None
-    q2_duration: Optional[str] = None
-    q3_understanding: Optional[str] = None
-    q4_clarity: Optional[str] = None
-    q5_accuracy: Optional[str] = None
-    q6_usefulness: Optional[str] = None
-    q7_advanced_questions: Optional[str] = None
-    q8_overall_experience: Optional[str] = None
-    q9_ease_of_use: Optional[str] = None
-    q10_response_time: Optional[str] = None
-    q11_ai_understanding: Optional[str] = None
-    q12_chat_vs_teacher: Optional[str] = None
-    q13_future_use: Optional[str] = None
-    q14_positive: Optional[str] = None
-    q15_improvements: Optional[str] = None
-    q16_problems: Optional[str] = None
-    q17_additional_info: Optional[str] = None
-    q18_contact_allowed: Optional[str] = None
-    satisfaction_score: float
-
-def generate_simple_embedding(text: str) -> List[float]:
-    """Generate a simple hash-based embedding for text."""
-    hash_obj = hashlib.sha256(text.encode())
-    hash_bytes = hash_obj.digest()
-    
-    embedding = []
-    for i in range(EMBEDDING_DIM):
-        byte_val = hash_bytes[i % len(hash_bytes)]
-        embedding.append((byte_val / 127.5) - 1.0)
-    
-    return embedding
-
-def prepare_survey_text(survey: Dict[str, Any]) -> str:
-    """Prepare survey data as text for embedding."""
-    text_parts = [
-        f"Cel: {survey.get('q1_goal', 'N/A')}",
-        f"Czas: {survey.get('q2_duration', 'N/A')}",
-        f"Zrozumienie: {survey.get('q3_understanding', 'N/A')}",
-        f"Jasność: {survey.get('q4_clarity', 'N/A')}",
-        f"Dokładność: {survey.get('q5_accuracy', 'N/A')}",
-        f"Użyteczność: {survey.get('q6_usefulness', 'N/A')}",
-        f"Zaawansowane: {survey.get('q7_advanced_questions', 'N/A')}",
-        f"Doświadczenie: {survey.get('q8_overall_experience', 'N/A')}",
-        f"Łatwość: {survey.get('q9_ease_of_use', 'N/A')}",
-        f"Szybkość: {survey.get('q10_response_time', 'N/A')}",
-        f"AI: {survey.get('q11_ai_understanding', 'N/A')}",
-        f"Chat vs nauczyciel: {survey.get('q12_chat_vs_teacher', 'N/A')}",
-        f"Przyszłość: {survey.get('q13_future_use', 'N/A')}",
-        f"Opinia: {survey.get('q14_positive', 'N/A')}",
-        f"Ulepszenia: {survey.get('q15_improvements', 'N/A')}",
-    ]
-    return " ".join(text_parts)
-
-@app.post("/api/surveys")
-async def add_survey(survey: SurveyResponse) -> dict:
-    """Add a new survey response to Qdrant and save to file."""
-    if not qdrant_client:
-        return {
-            "status": "error",
-            "message": "Qdrant not available",
-            "response_id": survey.response_id
-        }
-    
-    try:
-        # Generate next ID (count existing points + 1)
-        try:
-            info = qdrant_client.get_collection(COLLECTION)
-            point_id = info.points_count + 1
-        except:
-            point_id = 1
-        
-        # Prepare survey data
-        survey_dict = survey.dict()
-        survey_text = prepare_survey_text(survey_dict)
-        embedding = generate_simple_embedding(survey_text)
-        
-        # Prepare payload (filter out None values)
-        payload = {k: v for k, v in survey_dict.items() if v is not None}
-        
-        # Create point
-        point = PointStruct(
-            id=point_id,
-            vector=embedding,
-            payload=payload
-        )
-        
-        # Upload to Qdrant
-        qdrant_client.upsert(
-            collection_name=COLLECTION,
-            points=[point]
-        )
-        
-        return {
-            "status": "success",
-            "message": f"Survey saved successfully",
-            "response_id": survey.response_id,
-            "point_id": point_id,
-            "file_saved": False,
-            "file_path": "Qdrant only"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "response_id": survey.response_id
-        }
-
-@app.delete("/api/surveys/range/{start_id}/{end_id}")
-async def delete_survey_range(start_id: int, end_id: int) -> dict:
-    """Delete a range of surveys by point_id."""
-    if not qdrant_client:
-        return {
-            "status": "error",
-            "message": "Qdrant not available"
-        }
-    
-    try:
-        deleted_count = 0
-        errors = []
-        
-        for point_id in range(start_id, end_id + 1):
-            try:
-                qdrant_client.delete(
-                    collection_name=COLLECTION,
-                    points_selector=[point_id]
-                )
-                deleted_count += 1
-            except Exception as e:
-                errors.append(f"Point {point_id}: {str(e)}")
-        
-        return {
-            "status": "success",
-            "deleted": deleted_count,
-            "errors": errors[:10] if errors else []
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
-
-@app.post("/run")
-async def run(payload: dict):
-    data = payload.get("input", "")
-    result = llm.invoke(f"Analyze this data and provide insights: {data}")
-    return {"insights": result.content, "collection": COLLECTION}
-
-@app.get("/")
-async def root():
-    """Redirect to survey form."""
-    return {"message": "Analytics Agent 3", "survey_url": "/static/survey.html"}
-
-@app.get("/surveys")
-async def survey_form():
-    """Serve survey HTML form."""
-    survey_path = STATIC_DIR / "survey.html"
-    if survey_path.exists():
-        from fastapi.responses import FileResponse
-        return FileResponse(survey_path, media_type="text/html")
-    return {"error": "Survey form not found"}
-
-@app.get("/surveys/stats")
-async def surveys_stats():
-    """Get survey collection statistics."""
-    if not qdrant_client:
-        return {"error": "Qdrant not available"}
-    
-    try:
-        info = qdrant_client.get_collection(COLLECTION)
-        return {
-            "collection": COLLECTION,
-            "points_count": info.points_count,
-            "status": "ready"
-        }
-    except Exception as e:
-        return {"error": str(e), "collection": COLLECTION}
-
-# OpenAI-compatible chat endpoint for Open WebUI integration
-class ChatMessage(BaseModel):
+# OpenAI-compatible request models
+class Message(BaseModel):
     role: str
     content: str
 
 class ChatCompletionRequest(BaseModel):
-    model: str = "agent3_analytics"
-    messages: List[ChatMessage]
-    temperature: float = 0.7
-    stream: bool = False
+    model: str
+    messages: List[Message]
+    temperature: Optional[float] = 0.3
+    stream: Optional[bool] = False
 
-@app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
-    """OpenAI-compatible chat endpoint for analytics agent."""
+llm = ChatOllama(
+    model="phi3:mini",
+    base_url="http://ollama:11434",
+    timeout=120.0,
+    temperature=0.3,
+    num_ctx=2048
+)
+
+# Qdrant connection
+QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+
+# Available collections
+COLLECTIONS = {
+    "conversations": "agent1_conversations",
+    "turns": "agent1_turns", 
+    "knowledge": "BazaWiedzy",
+    "analytics_queries": "agent3_analitics"
+}
+
+
+def save_query_to_collection(query: str, answer: str, elapsed_time: float, stats_context: Dict[str, Any]):
+    """Save query and result to agent3_analitics collection."""
     try:
-        # Get last user message
-        user_message = None
-        for msg in reversed(request.messages):
-            if msg.role == "user":
-                user_message = msg.content
-                break
+        query_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
         
-        print(f"=== RECEIVED MESSAGE: '{user_message}' ===", flush=True)
+        # Generate embedding for query
+        query_vector = generate_embedding(query)
         
-        if not user_message:
-            return {"error": "No user message found"}
-        
-        # Build context from conversation history
-        context = "\n".join([f"{msg.role}: {msg.content}" for msg in request.messages[-5:]])
-        
-        # Check if query is about surveys/analytics
-        if any(keyword in user_message.lower() for keyword in ['ankiet', 'survey', 'statystyk', 'ocen', 'student', 'badani', 'odpowied', 'ile', 'jaki', 'średni', 'how many', 'count', 'dni', 'okres', 'przedział', 'najniżs', 'najwyżs', 'najgorsz', 'najleps', 'pokaż', 'pokaz', 'wyświetl', 'zobacz', 'gen_resp', 'list', 'bliski', 'blisk']):
-            user_lower = user_message.lower()
-            
-            response_text = None  # Initialize
-            
-            # Check for "near average" queries first
-            if any(word in user_lower for word in ['bliski', 'blisk', 'średni', 'przeciętn']) and any(word in user_lower for word in ['list', 'pokaż', 'pokaz', 'wyświetl']):
-                response_text = await find_surveys_near_average(tolerance=0.3, limit=10)
-            else:
-                # Check for extreme value queries FIRST (before specific survey ID)
-                if any(word in user_lower for word in ['najniż', 'najgorsz', 'najsłab', 'najgorsze', 'najsłabsze']):
-                    # Check if asking for list (10, lista, listę, podaj, pokaż, etc)
-                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'podaj', 'pokaż', 'pokaz', 'wypisz', 'wyświetl']):
-                        response_text = await find_lowest_surveys(10)
-                    else:
-                        # Query for single lowest score
-                        response_text = await find_extreme_survey(find_max=False)
-                elif any(word in user_lower for word in ['najwyż', 'najlep', 'najlepsze']):
-                    # Check if asking for list (10, lista, listę, podaj, pokaż, etc)
-                    if any(word in user_lower for word in ['10', 'dziesięć', 'list', 'podaj', 'pokaż', 'pokaz', 'wypisz', 'wyświetl']):
-                        response_text = await find_highest_surveys(10)
-                    else:
-                        # Query for single highest score
-                        response_text = await find_extreme_survey(find_max=True)
-                else:
-                    # Check for specific survey ID query
-                    import re
-                    survey_id_pattern = r'gen_resp_\d+'
-                    survey_id_matches = re.findall(survey_id_pattern, user_message)
-                    
-                    print(f"DEBUG: user_message = '{user_message}'", flush=True)
-                    print(f"DEBUG: survey_id_matches = {survey_id_matches}", flush=True)
-                    
-                    # Also check for numeric ID after "ankiet"
-                    if not survey_id_matches and 'ankiet' in user_lower:
-                        numeric_pattern = r'\b(\d{1,3})\b'
-                        numeric_matches = re.findall(numeric_pattern, user_message)
-                        if numeric_matches:
-                            survey_id_matches = numeric_matches
-                    
-                    print(f"DEBUG: final survey_id_matches = {survey_id_matches}", flush=True)
-                    
-                    if survey_id_matches:
-                        # Specific survey query - fetch from Qdrant
-                        survey_id = survey_id_matches[-1]
-                        try:
-                            point = None
-                            if survey_id.isdigit():
-                                points = qdrant_client.retrieve(
-                                    collection_name=COLLECTION,
-                                    ids=[int(survey_id)],
-                                    with_payload=True,
-                                    with_vectors=False
-                                )
-                                if points:
-                                    point = points[0]
-                            else:
-                                from qdrant_client.models import Filter, FieldCondition, MatchValue
-                                points, _ = qdrant_client.scroll(
-                                    collection_name=COLLECTION,
-                                    limit=1,
-                                    with_payload=True,
-                                    with_vectors=False,
-                                    scroll_filter=Filter(
-                                        must=[
-                                            FieldCondition(
-                                                key="response_id",
-                                                match=MatchValue(value=survey_id)
-                                            )
-                                        ]
-                                    )
-                                )
-                                if points:
-                                    point = points[0]
-                            
-                            if point:
-                                p = point.payload
-                                response_text = f"""Ankieta {p.get('response_id', 'N/A')}
-Data: {p.get('timestamp', 'N/A')}
-Student ID: {p.get('student_id', 'N/A')}
-Email: {p.get('student_email', 'N/A')}
-Album: {p.get('album_number', 'N/A')}
-Ocena zadowolenia: {p.get('satisfaction_score', 'N/A')}/5.0
-
-Cel wizyty: {p.get('q1_goal', 'N/A')}
-Czas trwania: {p.get('q2_duration', 'N/A')}
-Zrozumienie (1-5): {p.get('q3_understanding', 'N/A')}
-Jasność (1-5): {p.get('q4_clarity', 'N/A')}
-Dokładność (1-5): {p.get('q5_accuracy', 'N/A')}
-Przydatność (1-5): {p.get('q6_usefulness', 'N/A')}
-Zaawansowane pytania (1-5): {p.get('q7_advanced_questions', 'N/A')}
-Ogólne doświadczenie (1-5): {p.get('q8_overall_experience', 'N/A')}
-Łatwość użycia (1-5): {p.get('q9_ease_of_use', 'N/A')}
-Czas odpowiedzi (1-5): {p.get('q10_response_time', 'N/A')}
-Zrozumienie AI (1-5): {p.get('q11_ai_understanding', 'N/A')}
-Chat vs. nauczyciel: {p.get('q12_chat_vs_teacher', 'N/A')}
-Przyszłe użycie: {p.get('q13_future_use', 'N/A')}
-Pozytywne: {p.get('q14_positive', 'N/A')}
-Usprawnienia: {p.get('q15_improvements', 'N/A')}
-Problemy: {p.get('q16_problems', 'N/A')}
-Dodatkowe info: {p.get('q17_additional_info', 'N/A')}
-Kontakt dozwolony: {p.get('q18_contact_allowed', 'N/A')}"""
-                            else:
-                                response_text = f"Nie znaleziono ankiety: {survey_id}"
-                        except Exception as e:
-                            response_text = f"Błąd podczas pobierania ankiety: {str(e)}"
-                    elif not response_text:
-                        # Check for date range query and score range query
-                        import re
-                        date_pattern = r'(\d{1,2})\.(\d{1,2})\.(\d{4})'
-                        dates = re.findall(date_pattern, user_message)
-                        
-                        # Check for score range query
-                        score_pattern = r'(\d+(?:\.\d+)?)\s*[-–do]+\s*(\d+(?:\.\d+)?)'
-                        score_matches = re.findall(score_pattern, user_message)
-                        
-                        if score_matches and ('ocen' in user_lower or 'ocena' in user_lower or 'zadowolenia' in user_lower):
-                            # Score range query - return directly without LLM
-                            score_min = float(score_matches[0][0])
-                            score_max = float(score_matches[0][1])
-                            count = await count_surveys_by_score_range(score_min, score_max)
-                            response_text = f"Liczba ankiet z ocenami w przedziale {score_min}-{score_max}: {count}"
-                        elif len(dates) >= 2 and ('do' in user_lower or 'okres' in user_lower or 'przedział' in user_lower or '-' in user_message):
-                            # Date range query - return directly without LLM
-                            day1, month1, year1 = dates[0]
-                            day2, month2, year2 = dates[1]
-                            date_from = f"{year1}-{month1.zfill(2)}-{day1.zfill(2)}T00:00:00"
-                            date_to = f"{year2}-{month2.zfill(2)}-{day2.zfill(2)}T23:59:59"
-                            
-                            count = await count_surveys_in_date_range(date_from, date_to)
-                            response_text = f"W okresie {day1}.{month1}.{year1} - {day2}.{month2}.{year2} jest {count} ankiet."
-                        elif 'ile' in user_lower and 'ankiet' in user_lower:
-                            # Direct count - return without LLM
-                            stats = await get_survey_context()
-                            response_text = stats.split('\n')[0]
-                        elif ('średni' in user_lower or 'średnia' in user_lower) and not any(word in user_lower for word in ['list', 'pokaż', 'pokaz']):
-                            # Direct average - return without LLM (only if not asking for list)
-                            stats = await get_survey_context()
-                            lines = stats.split('\n')
-                            response_text = lines[1] if len(lines) > 1 else stats
-                        else:
-                            # General stats - return without LLM
-                            response_text = await get_survey_context()
-            
-            # If response_text wasn't set, provide default
-            if not response_text:
-                response_text = await get_survey_context()
-        else:
-            response_text = "Jestem agentem analitycznym zajmującym się ankietami studentów. Mogę podać:\n- Liczbę ankiet\n- Statystyki ocen\n- Ankiety z konkretnego okresu\n- Ankiety z określonym zakresem ocen\n- Najlepsze i najgorsze ankiety"
-        
-        # Format as OpenAI response
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": request.model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response_text
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": len(user_message.split()),
-                "completion_tokens": len(response_text.split()),
-                "total_tokens": len(user_message.split()) + len(response_text.split())
-            }
+        # Prepare payload
+        payload = {
+            "query_id": query_id,
+            "timestamp": timestamp,
+            "query": query,
+            "answer": answer,
+            "response_time_sec": round(elapsed_time, 2),
+            "stats_snapshot": {
+                "total_conversations": stats_context.get("total_conversations", 0),
+                "total_turns": stats_context.get("total_turns", 0),
+                "total_documents": stats_context.get("total_documents", 0)
+            },
+            "model": "phi3:mini",
+            "agent": "agent3_analytics"
         }
+        
+        # Save to Qdrant
+        point = PointStruct(
+            id=hash(query_id) % (10 ** 8),  # Convert UUID to int
+            vector=query_vector,
+            payload=payload
+        )
+        
+        client.upsert(
+            collection_name=COLLECTIONS["analytics_queries"],
+            points=[point]
+        )
+        
+        return True
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Error saving query to collection: {e}")
+        return False
 
-async def get_survey_context():
-    """Get survey statistics for context."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
+
+def generate_embedding(text: str, dim: int = 768) -> List[float]:
+    """Generate hash-based embedding for RAG search."""
+    hash_obj = hashlib.sha256(text.lower().encode('utf-8'))
+    hash_bytes = hash_obj.digest()
+    embedding = []
+    for i in range(dim):
+        byte_val = hash_bytes[i % len(hash_bytes)]
+        embedding.append((byte_val / 255.0) * 2 - 1)
+    return embedding
+
+
+def analyze_conversations(query: str = "") -> Dict[str, Any]:
+    """Analyze conversations based on query."""
     try:
-        info = qdrant_client.get_collection(COLLECTION)
-        total = info.points_count
+        points = client.scroll(
+            collection_name=COLLECTIONS["conversations"],
+            limit=1000,
+            with_payload=True
+        )[0]
         
-        if total == 0:
-            return "Baza danych jest pusta. Brak ankiet do analizy."
+        if not points:
+            return {"error": "No conversations found"}
         
-        # Get all surveys
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
+        conversations = [p.payload for p in points]
         
-        # Calculate statistics
-        scores = []
-        goals = []
-        durations = []
+        # Basic statistics
+        total = len(conversations)
+        by_category = {}
+        by_channel = {}
+        by_resolved = {"resolved": 0, "unresolved": 0}
+        by_resolved_by = {}
+        total_duration = 0
+        total_turns = 0
+        csat_scores = []
+        sensitive_count = 0
         
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            scores.append(score)
+        for conv in conversations:
+            cat = conv.get("category", "Unknown")
+            by_category[cat] = by_category.get(cat, 0) + 1
             
-            if payload.get('q1_goal'):
-                goals.append(payload['q1_goal'])
-            if payload.get('q2_duration'):
-                durations.append(payload['q2_duration'])
+            ch = conv.get("channel", "Unknown")
+            by_channel[ch] = by_channel.get(ch, 0) + 1
+            
+            if conv.get("resolved"):
+                by_resolved["resolved"] += 1
+                resolver = conv.get("resolved_by", "unknown")
+                by_resolved_by[resolver] = by_resolved_by.get(resolver, 0) + 1
+            else:
+                by_resolved["unresolved"] += 1
+            
+            total_duration += conv.get("duration_sec", 0)
+            total_turns += conv.get("turn_count", 0)
+            
+            if conv.get("csat"):
+                csat_scores.append(conv["csat"])
+            
+            if conv.get("contains_sensitive"):
+                sensitive_count += 1
         
-        avg_score = sum(scores) / len(scores) if scores else 0
-        min_score = min(scores) if scores else 0
-        max_score = max(scores) if scores else 0
+        avg_duration = total_duration / total if total > 0 else 0
+        avg_turns = total_turns / total if total > 0 else 0
+        avg_csat = sum(csat_scores) / len(csat_scores) if csat_scores else 0
         
-        # Count goals
-        from collections import Counter
-        goal_counts = Counter(goals)
-        top_goals = goal_counts.most_common(3)
-        
-        stats = f"""Liczba ankiet: {total}
-Średnia ocena zadowolenia: {avg_score:.2f}/5.0
-Najniższa ocena: {min_score:.2f}
-Najwyższa ocena: {max_score:.2f}
-
-Najczęstsze cele wizyt:"""
-        
-        for goal, count in top_goals:
-            stats += f"\n- {goal}: {count} ankiet"
+        stats = {
+            "total_conversations": total,
+            "by_category": by_category,
+            "by_channel": by_channel,
+            "resolution": by_resolved,
+            "resolved_by": by_resolved_by,
+            "avg_duration_sec": round(avg_duration, 1),
+            "avg_duration_min": round(avg_duration / 60, 1),
+            "avg_turns": round(avg_turns, 1),
+            "avg_csat": round(avg_csat, 2),
+            "csat_count": len(csat_scores),
+            "sensitive_conversations": sensitive_count
+        }
         
         return stats
         
     except Exception as e:
-        return f"Błąd pobierania statystyk: {e}"
+        return {"error": str(e)}
 
-async def count_surveys_in_date_range(date_from: str, date_to: str):
-    """Count surveys in specific date range."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
-    try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
-        
-        # Filter by date range
-        count = 0
-        for point in all_points:
-            payload = point.payload or {}
-            timestamp = payload.get('timestamp', '')
-            if timestamp >= date_from and timestamp <= date_to:
-                count += 1
-        
-        return count
-    except Exception as e:
-        return f"Błąd: {e}"
 
-async def count_surveys_by_score_range(score_min: float, score_max: float):
-    """Count surveys with satisfaction scores in specific range."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
+def analyze_turns(query: str = "") -> Dict[str, Any]:
+    """Analyze conversation turns."""
     try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
+        points = client.scroll(
+            collection_name=COLLECTIONS["turns"],
+            limit=1000,
+            with_payload=True
+        )[0]
         
-        # Filter by score range
-        count = 0
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            if score >= score_min and score <= score_max:
-                count += 1
+        if not points:
+            return {"error": "No turns found"}
         
-        return count
-    except Exception as e:
-        return f"Błąd: {e}"
-
-async def find_surveys_near_average(tolerance: float = 0.3, limit: int = 10):
-    """Find surveys with scores close to average."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
-    try:
-        # Get all points to calculate average
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
+        turns = [p.payload for p in points]
         
-        if not all_points:
-            return "Brak ankiet w bazie."
+        total = len(turns)
+        by_role = {"student": 0, "bos": 0}
+        sentiment_scores = []
+        urgency_scores = []
+        by_category = {}
+        sensitive_count = 0
         
-        # Calculate average
-        total_score = 0
-        count = 0
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            if score > 0:
-                total_score += score
-                count += 1
-        
-        if count == 0:
-            return "Brak ankiet z oceną."
-        
-        avg_score = total_score / count
-        
-        # Find surveys near average
-        near_avg = []
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            if abs(score - avg_score) <= tolerance:
-                near_avg.append({
-                    'response_id': payload.get('response_id', 'N/A'),
-                    'score': score,
-                    'timestamp': payload.get('timestamp', 'N/A'),
-                    'diff': abs(score - avg_score)
-                })
-        
-        # Sort by difference from average
-        near_avg.sort(key=lambda x: x['diff'])
-        near_avg = near_avg[:limit]
-        
-        result = f"Średnia ocena: {avg_score:.2f}/5.0\n"
-        result += f"Znaleziono {len(near_avg)} ankiet w zakresie ±{tolerance}:\n\n"
-        for survey in near_avg:
-            result += f"- {survey['response_id']}: {survey['score']:.2f}/5.0 (różnica: {survey['diff']:.2f})\n"
-        
-        return result
-    except Exception as e:
-        return f"Błąd: {e}"
-
-async def find_lowest_surveys(limit: int = 10):
-    """Find surveys with lowest satisfaction scores."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
-    try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
-        
-        if not all_points:
-            return "Brak ankiet w bazie."
-        
-        # Create list with scores
-        surveys_with_scores = []
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            surveys_with_scores.append({
-                'response_id': payload.get('response_id', str(point.id)),
-                'score': score,
-                'timestamp': payload.get('timestamp', 'N/A')[:10],
-                'goal': payload.get('q1_goal', 'N/A'),
-                'student_id': payload.get('student_id', 'N/A')
-            })
-        
-        # Sort by score (ascending) and take first 'limit'
-        surveys_with_scores.sort(key=lambda x: x['score'])
-        lowest = surveys_with_scores[:limit]
-        
-        result = f"🔻 {len(lowest)} ankiet z najniższymi ocenami:\n\n"
-        for i, survey in enumerate(lowest, 1):
-            result += f"{i}. {survey['response_id']}: ⭐ {survey['score']:.2f}/5.0\n"
-            result += f"   Data: {survey['timestamp']}, Cel: {survey['goal']}\n\n"
-        
-        return result
-    except Exception as e:
-        return f"Błąd: {e}"
-
-async def find_highest_surveys(limit: int = 10):
-    """Find surveys with highest satisfaction scores."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
-    try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
-        
-        if not all_points:
-            return "Brak ankiet w bazie."
-        
-        # Create list with scores
-        surveys_with_scores = []
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            surveys_with_scores.append({
-                'response_id': payload.get('response_id', str(point.id)),
-                'score': score,
-                'timestamp': payload.get('timestamp', 'N/A')[:10],
-                'goal': payload.get('q1_goal', 'N/A'),
-                'student_id': payload.get('student_id', 'N/A')
-            })
-        
-        # Sort by score (descending) and take first 'limit'
-        surveys_with_scores.sort(key=lambda x: x['score'], reverse=True)
-        highest = surveys_with_scores[:limit]
-        
-        result = f"🔺 {len(highest)} ankiet z najwyższymi ocenami:\n\n"
-        for i, survey in enumerate(highest, 1):
-            result += f"{i}. {survey['response_id']}: ⭐ {survey['score']:.2f}/5.0\n"
-            result += f"   Data: {survey['timestamp']}, Cel: {survey['goal']}\n\n"
-        
-        return result
-    except Exception as e:
-        return f"Błąd: {e}"
-
-async def find_extreme_survey(find_max: bool = False):
-    """Find survey with lowest or highest satisfaction score."""
-    if not qdrant_client:
-        return "Brak połączenia z bazą danych."
-    
-    try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
-        
-        if not all_points:
-            return "Brak ankiet w bazie."
-        
-        # Find extreme
-        extreme_point = None
-        extreme_score = float('inf') if not find_max else float('-inf')
-        
-        for point in all_points:
-            payload = point.payload or {}
-            score = float(payload.get('satisfaction_score', 0) or 0)
+        for turn in turns:
+            role = turn.get("role", "unknown")
+            if role in by_role:
+                by_role[role] += 1
             
-            if find_max:
-                if score > extreme_score:
-                    extreme_score = score
-                    extreme_point = point
-            else:
-                if score < extreme_score:
-                    extreme_score = score
-                    extreme_point = point
+            if "sentiment" in turn:
+                sentiment_scores.append(turn["sentiment"])
+            if "urgency" in turn:
+                urgency_scores.append(turn["urgency"])
+            
+            cat = turn.get("category", "Unknown")
+            by_category[cat] = by_category.get(cat, 0) + 1
+            
+            if turn.get("contains_sensitive"):
+                sensitive_count += 1
         
-        if extreme_point:
-            payload = extreme_point.payload or {}
-            result = f"""{'Najwyższa' if find_max else 'Najniższa'} ocena: {extreme_score:.2f}/5.0
-ID ankiety: {payload.get('response_id', extreme_point.id)}
-Student: {payload.get('student_id', 'N/A')}
-Data: {payload.get('timestamp', 'N/A')[:10]}
-Cel: {payload.get('q1_goal', 'N/A')}"""
-            return result
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
+        avg_urgency = sum(urgency_scores) / len(urgency_scores) if urgency_scores else 0
         
-        return "Nie znaleziono ankiety."
+        stats = {
+            "total_turns": total,
+            "by_role": by_role,
+            "by_category": by_category,
+            "avg_sentiment": round(avg_sentiment, 3),
+            "avg_urgency": round(avg_urgency, 3),
+            "sentiment_range": {
+                "min": round(min(sentiment_scores), 3) if sentiment_scores else 0,
+                "max": round(max(sentiment_scores), 3) if sentiment_scores else 0
+            },
+            "urgency_range": {
+                "min": round(min(urgency_scores), 3) if urgency_scores else 0,
+                "max": round(max(urgency_scores), 3) if urgency_scores else 0
+            },
+            "sensitive_turns": sensitive_count
+        }
+        
+        return stats
+        
     except Exception as e:
-        return f"Błąd: {e}"
+        return {"error": str(e)}
 
-@app.get("/v1/models")
-async def list_models():
-    """List available models for OpenAI compatibility."""
+
+def analyze_knowledge_base(query: str = "") -> Dict[str, Any]:
+    """Analyze knowledge base."""
+    try:
+        points = client.scroll(
+            collection_name=COLLECTIONS["knowledge"],
+            limit=1000,
+            with_payload=True
+        )[0]
+        
+        if not points:
+            return {"error": "No documents found"}
+        
+        documents = [p.payload for p in points]
+        
+        total = len(documents)
+        by_category = {}
+        by_file_type = {}
+        total_size = 0
+        
+        for doc in documents:
+            cat = doc.get("category", "Unknown")
+            by_category[cat] = by_category.get(cat, 0) + 1
+            
+            ft = doc.get("file_type", "txt")
+            by_file_type[ft] = by_file_type.get(ft, 0) + 1
+            
+            content = doc.get("full_content", "")
+            total_size += len(content)
+        
+        avg_size = total_size / total if total > 0 else 0
+        
+        stats = {
+            "total_documents": total,
+            "by_category": by_category,
+            "by_file_type": by_file_type,
+            "avg_document_size": round(avg_size, 1),
+            "total_content_size": total_size
+        }
+        
+        return stats
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/tags")
+async def list_tags():
+    """Ollama-compatible tags endpoint."""
     return {
-        "object": "list",
-        "data": [{
-            "id": "agent3_analytics",
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": "agent3"
-        }]
+        "models": [
+            {
+                "name": "agent3-analytics",
+                "model": "agent3-analytics",
+                "modified_at": "2026-02-12T00:00:00Z",
+                "size": 0,
+                "digest": "agent3-analytics",
+                "details": {
+                    "parent_model": "",
+                    "format": "agent",
+                    "family": "analytics",
+                    "families": ["analytics"],
+                    "parameter_size": "0",
+                    "quantization_level": "none"
+                }
+            }
+        ]
     }
 
-@app.get("/surveys/list")
-async def list_surveys(limit: int = None, date_from: str = None, date_to: str = None, score_min: float = None, score_max: float = None, album_number: str = None):
-    """List survey responses with optional filtering (from Qdrant)."""
-    if not qdrant_client:
-        return {"error": "Qdrant not available"}
+
+@app.get("/v1/models")
+async def list_models(authorization: Optional[str] = Header(None)):
+    """List available models - OpenAI API compatible."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "agent3-analytics",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "agent3",
+                "permission": [],
+                "root": "agent3-analytics",
+                "parent": None,
+            }
+        ]
+    }
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(request: ChatCompletionRequest, authorization: Optional[str] = Header(None)):
+    """OpenAI-compatible chat completions endpoint."""
+    
+    # Extract last user message
+    user_messages = [msg for msg in request.messages if msg.role == "user"]
+    if not user_messages:
+        return {"error": "No user message found"}
+    
+    query = user_messages[-1].content
+    query_lower = query.lower()
+    
+    start_time = time.time()
+    
     try:
-        all_points = []
-        offset = None
-        while True:
-            points, offset = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=200,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(points)
-            if offset is None:
-                break
+        # Get statistics
+        conv_stats = analyze_conversations("")
+        turn_stats = analyze_turns("")
+        kb_stats = analyze_knowledge_base("")
+        
+        # Prepare context
+        context = f"""STATYSTYKI SYSTEMU:
 
-        total_count = len(all_points)
+ROZMOWY (całe konwersacje z chatbotem): {conv_stats.get('total_conversations', 0)} total, {conv_stats.get('resolution', {}).get('resolved', 0)} rozwiązanych
+Średni czas: {conv_stats.get('avg_duration_min', 0):.1f}min, CSAT: {conv_stats.get('avg_csat', 0):.2f}
+Kategorie rozmów: {conv_stats.get('by_category', {})}
 
-        filtered_surveys = []
-        for point in all_points:
-            payload = point.payload or {}
-            timestamp = payload.get('timestamp', '')
-            score = float(payload.get('satisfaction_score', 0) or 0)
-            response_id = payload.get('response_id') or str(point.id)
-            survey_album = payload.get('album_number', '')
+WYPOWIEDZI (pojedyncze wiadomości w rozmowach): {turn_stats.get('total_turns', 0)} total
+Sentyment: {turn_stats.get('avg_sentiment', 0):.2f}, Pilność: {turn_stats.get('avg_urgency', 0):.2f}
 
-            # Check album number filter
-            if album_number and survey_album != album_number:
-                continue
+BAZA WIEDZY: {kb_stats.get('total_documents', 0)} dokumentów
+Kategorie: {list(kb_stats.get('by_category', {}).keys())}"""
 
-            # Check date filters
-            if date_from and timestamp < date_from:
-                continue
-            if date_to and timestamp > date_to:
-                continue
+        prompt = f"""Jesteś agentem analitycznym systemu obsługi studentów. Dysponujesz następującymi danymi:
 
-            # Check score filters
-            if score_min is not None and score < score_min:
-                continue
-            if score_max is not None and score > score_max:
-                continue
+{context}
 
-            filtered_surveys.append({
-                'id': str(point.id),
-                'response_id': response_id,
-                'timestamp': timestamp,
-                'satisfaction_score': score
-            })
+DEFINICJE - BARDZO WAŻNE:
+- ROZMOWA (conversation) = kompletna konwersacja/sesja z chatbotem (od początku do końca)
+- WYPOWIEDŹ/TURA (turn) = pojedyncza wiadomość studenta lub bota w ramach rozmowy
+- Przykład: 1 rozmowa może zawierać 5-10 wypowiedzi (student pisze, bot odpowiada, itd.)
 
-        # Sort by timestamp desc
-        filtered_surveys.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+WAŻNE ZASADY:
+1. ODPOWIADAJ na pytania o:
+   - Statystyki ROZMÓW (liczba, kategorie, tematy, średnie czasy) - użyj liczby z "ROZMOWY"
+   - Statystyki WYPOWIEDZI (liczba wiadomości, sentyment) - użyj liczby z "WYPOWIEDZI"
+   - Kategorie zgłoszeń i ich liczebność
+   - CSAT, urgency rozmów
+   - Dokumenty w bazie wiedzy
+   - Analitykę systemu obsługi studentów
 
-        # Apply limit
-        if limit:
-            filtered_surveys = filtered_surveys[:limit]
+2. NIE ODPOWIADAJ na pytania całkowicie spoza zakresu systemu, np.:
+   - Matematyka (np. "ile jest 2+2", "oblicz pierwiastek")
+   - Historia (np. "kto odkrył Amerykę")
+   - Astronomia (np. "kiedy jest rok przestępny")
+   - Geografia, nauki ścisłe niezwiązane z systemem
+   
+   W takim przypadku odpowiedz:
+   "Nie mam danych, aby odpowiedzieć na to pytanie. Jestem agentem analitycznym systemu obsługi studentów i dysponuję tylko danymi o rozmowach, kategoriach zgłoszeń i bazie wiedzy uczelni."
 
+3. Odpowiadaj KRÓTKO i konkretnie, podając DOKŁADNE LICZBY z powyższych statystyk
+
+PRZYKŁADY DOBRYCH ODPOWIEDZI:
+- "ile rozmów z chatbotem" → użyj liczby z "ROZMOWY" (obecnie: {conv_stats.get('total_conversations', 0)})
+- "ile wypowiedzi" → użyj liczby z "WYPOWIEDZI" (obecnie: {turn_stats.get('total_turns', 0)})
+- "ile wiadomości" → użyj liczby z "WYPOWIEDZI"
+- "ile sesji" → użyj liczby z "ROZMOWY"
+
+Pytanie: {query}
+
+Odpowiedź (zwięzła, z konkretnymi liczbami):"""
+        
+        try:
+            response = llm.invoke(prompt)
+            answer = response.content if hasattr(response, 'content') else str(response)
+            answer = f"{answer}\n\nOdpowiedź wygenerowana przez phi3:mini"
+        except Exception as e:
+            answer = f"OGÓLNE STATYSTYKI\n\n{context}\n\n⚠️ LLM niedostępny: {str(e)}"
+        
+        elapsed_time = time.time() - start_time
+        answer = f"{answer}\n\nCzas odpowiedzi: {elapsed_time:.2f}s"
+        
+        # Save query and result to collection
+        save_query_to_collection(
+            query=query,
+            answer=answer,
+            elapsed_time=elapsed_time,
+            stats_context={
+                "total_conversations": conv_stats.get('total_conversations', 0),
+                "total_turns": turn_stats.get('total_turns', 0),
+                "total_documents": kb_stats.get('total_documents', 0)
+            }
+        )
+        
         return {
-            "status": "success",
-            "count": len(filtered_surveys),
-            "total_count": total_count,
-            "surveys": filtered_surveys
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "agent3-analytics",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": answer
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": len(query.split()),
+                "completion_tokens": len(answer.split()),
+                "total_tokens": len(query.split()) + len(answer.split())
+            }
         }
     except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/surveys/view/{survey_id}")
-async def view_survey(survey_id: str):
-    """View a specific survey response (from Qdrant)."""
-    if not qdrant_client:
-        return {"error": "Qdrant not available"}
-    try:
-        point = None
-
-        if survey_id.isdigit():
-            points = qdrant_client.retrieve(
-                collection_name=COLLECTION,
-                ids=[int(survey_id)],
-                with_payload=True,
-                with_vectors=False
-            )
-            if points:
-                point = points[0]
-        else:
-            points, _ = qdrant_client.scroll(
-                collection_name=COLLECTION,
-                limit=1,
-                with_payload=True,
-                with_vectors=False,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="response_id",
-                            match=MatchValue(value=survey_id)
-                        )
-                    ]
-                )
-            )
-            if points:
-                point = points[0]
-
-        if not point:
-            return {"error": f"Survey not found: {survey_id}"}
-
-        payload = point.payload or {}
-        payload["point_id"] = point.id
-
+        elapsed_time = time.time() - start_time
+        error_msg = f"⚠️ Błąd: {str(e)}\n\nCzas odpowiedzi: {elapsed_time:.2f}s"
         return {
-            "status": "success",
-            "survey_id": str(point.id),
-            "data": payload
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "agent3-analytics",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": error_msg
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
         }
-    except Exception as e:
-        return {"error": str(e)}
 
-@app.get("/surveys/browse")
-async def browse_surveys():
-    """HTML page to browse surveys with filters."""
-    from fastapi.responses import FileResponse
-    return FileResponse('static/browse.html')
+
+@app.get("/stats")
+async def get_stats():
+    """Get all available statistics."""
+    return {
+        "conversations": analyze_conversations(""),
+        "turns": analyze_turns(""),
+        "knowledge_base": analyze_knowledge_base("")
+    }

@@ -3,3 +3,5 @@ uvicorn
 langchain
 langchain-community
 qdrant-client
+python-docx
+PyPDF2

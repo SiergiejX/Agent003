@@ -20,6 +20,27 @@ echo "=== START SYSTEMU ==="
 
 # Kontenery bazowe
 start_compose "ollama"
+
+# Czekaj aż Ollama będzie gotowa i pobierz model phi3:mini
+echo
+echo "▶ Czekanie na gotowość Ollama..."
+sleep 5
+for i in {1..12}; do
+  if docker exec ollama ollama list &>/dev/null; then
+    echo "✅ Ollama gotowa"
+    break
+  fi
+  echo "   Próba $i/12..."
+  sleep 5
+done
+
+echo "▶ Pobieranie modelu phi3:mini..."
+docker exec ollama ollama pull phi3:mini
+echo "✅ Model phi3:mini zainstalowany"
+echo "▶ Pobieranie modelu embendingowego..."
+docker exec ollama pull nomic-embed-text
+echo "✅ Model embendingowy zainstalowany"
+
 start_compose "qdrant"
 start_compose "Open_WebUI"
 start_compose "nodered"

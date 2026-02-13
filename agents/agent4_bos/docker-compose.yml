@@ -7,7 +7,7 @@ services:
     networks:
       - ai_network
     environment:
-      - COLLECTION=agent4_bos
+      - COLLECTION=zapytania_agent_4
 
 networks:
   ai_network:
