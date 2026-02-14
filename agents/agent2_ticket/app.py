@@ -1,14 +1,19 @@
 import os
-import hashlib
 import time
 import uuid
+import json
+import urllib.request
 from fastapi import FastAPI
 from langchain_community.chat_models import ChatOllama
 from qdrant_client import QdrantClient
 from typing import List
 
 app = FastAPI()
-llm = ChatOllama(model="llama3", base_url="http://ollama:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:3b")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+llm = ChatOllama(model=CHAT_MODEL, base_url=OLLAMA_BASE_URL)
 
 # Qdrant configuration
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
@@ -21,17 +26,21 @@ client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 tickets = {}
 
 
-def generate_simple_embedding(text: str, dim: int = 768) -> List[float]:
-    """Generate simple hash-based embedding."""
-    hash_obj = hashlib.sha256(text.lower().encode('utf-8'))
-    hash_bytes = hash_obj.digest()
-    
-    embedding = []
-    for i in range(dim):
-        byte_val = hash_bytes[i % len(hash_bytes)]
-        embedding.append((byte_val / 255.0) * 2 - 1)
-    
-    return embedding
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using native Ollama embeddings API."""
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "prompt": text
+    }
+    request = urllib.request.Request(
+        url=f"{OLLAMA_BASE_URL}/api/embeddings",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    return result.get("embedding", [])
 
 
 def save_ticket_to_qdrant(ticket_id: str, ticket_data: dict):
@@ -45,7 +54,7 @@ def save_ticket_to_qdrant(ticket_id: str, ticket_data: dict):
             point_id = 1
         
         # Generate embedding from ticket subject and description
-        embedding = generate_simple_embedding(f"{ticket_data['subject']} {ticket_data.get('description', '')}", dim=768)
+        embedding = generate_embedding(f"{ticket_data['subject']} {ticket_data.get('description', '')}")
         
         from qdrant_client.models import PointStruct
         point = PointStruct(

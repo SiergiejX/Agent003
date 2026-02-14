@@ -5,8 +5,9 @@ Processes .txt, .pdf, .docx, .doc files from chatbot-baza-wiedzy-nowa/
 """
 
 import os
-import hashlib
 import time
+import json
+import urllib.request
 from pathlib import Path
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
@@ -32,22 +33,36 @@ except ImportError:
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "BazaWiedzy"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 EMBEDDING_DIM = 768
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 
-def generate_simple_embedding(text: str, dim: int = 768) -> List[float]:
-    """Generate simple hash-based embedding."""
-    hash_obj = hashlib.sha256(text.lower().encode('utf-8'))
-    hash_bytes = hash_obj.digest()
-    
-    embedding = []
-    for i in range(dim):
-        byte_val = hash_bytes[i % len(hash_bytes)]
-        embedding.append((byte_val / 255.0) * 2 - 1)
-    
-    return embedding
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using native Ollama embeddings API."""
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "prompt": text
+    }
+    request = urllib.request.Request(
+        url=f"{OLLAMA_BASE_URL}/api/embeddings",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    return result.get("embedding", [])
+
+
+def resolve_embedding_dim() -> int:
+    """Resolve embedding dimension from the configured model."""
+    sample_embedding = generate_embedding("test")
+    if not sample_embedding:
+        raise ValueError("Nie udało się wygenerować embeddingu z Ollama")
+    return len(sample_embedding)
 
 
 def read_txt_file(filepath: Path) -> str:
@@ -130,6 +145,9 @@ def create_collection():
     except:
         pass
     
+    global EMBEDDING_DIM
+    EMBEDDING_DIM = resolve_embedding_dim()
+
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE)
@@ -178,7 +196,7 @@ def upload_to_qdrant(documents: List[Dict[str, Any]]):
     points = []
     for idx, doc in enumerate(documents, 1):
         # Generate embedding from content
-        embedding = generate_simple_embedding(doc["content"], dim=EMBEDDING_DIM)
+        embedding = generate_embedding(doc["content"])
         
         point = PointStruct(
             id=idx,

@@ -1,7 +1,8 @@
 import os
-import hashlib
 import time
 import uuid
+import json
+import urllib.request
 from fastapi import FastAPI
 from langchain_community.chat_models import ChatOllama
 from qdrant_client import QdrantClient
@@ -9,9 +10,13 @@ from typing import List
 
 app = FastAPI()
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:3b")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
 llm = ChatOllama(
-    model="llama3",
-    base_url="http://ollama:11434"
+    model=CHAT_MODEL,
+    base_url=OLLAMA_BASE_URL
 )
 
 # Qdrant configuration
@@ -27,17 +32,21 @@ client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 conversations = {}
 
 
-def generate_simple_embedding(text: str, dim: int = 768) -> List[float]:
-    """Generate simple hash-based embedding."""
-    hash_obj = hashlib.sha256(text.lower().encode('utf-8'))
-    hash_bytes = hash_obj.digest()
-    
-    embedding = []
-    for i in range(dim):
-        byte_val = hash_bytes[i % len(hash_bytes)]
-        embedding.append((byte_val / 255.0) * 2 - 1)
-    
-    return embedding
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using native Ollama embeddings API."""
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "prompt": text
+    }
+    request = urllib.request.Request(
+        url=f"{OLLAMA_BASE_URL}/api/embeddings",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    return result.get("embedding", [])
 
 
 # Minimum similarity threshold - documents below this score are considered irrelevant
@@ -46,7 +55,7 @@ MIN_SIMILARITY_THRESHOLD = 0.5
 def search_knowledge_base(query: str, limit: int = 3) -> List[dict]:
     """Search knowledge base for relevant documents."""
     try:
-        query_embedding = generate_simple_embedding(query, dim=768)
+        query_embedding = generate_embedding(query)
         
         results = client.query_points(
             collection_name=KNOWLEDGE_BASE_COLLECTION,
@@ -83,7 +92,7 @@ def save_topic_to_qdrant(conversation_id: str, topic: str, first_question: str):
             point_id = 1
         
         # Generate embedding
-        embedding = generate_simple_embedding(f"{topic} {first_question}", dim=768)
+        embedding = generate_embedding(f"{topic} {first_question}")
         
         from qdrant_client.models import PointStruct
         point = PointStruct(
@@ -116,7 +125,7 @@ def save_conversation_to_qdrant(conversation_id: str, conversation_data: dict):
         
         # Create embedding from all turns
         all_text = " ".join([f"{turn['question']} {turn['answer']}" for turn in conversation_data['turns']])
-        embedding = generate_simple_embedding(all_text, dim=768)
+        embedding = generate_embedding(all_text)
         
         from qdrant_client.models import PointStruct
         point = PointStruct(

@@ -9,7 +9,7 @@ services:
 
     environment:
       # Adres API Ollama działającej w tej samej sieci Docker
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Dodaj agent3_analytics jako dodatkowy model
       - OPENAI_API_BASE_URLS=http://agent3_analytics:8000/v1
       - OPENAI_API_KEYS=dummy

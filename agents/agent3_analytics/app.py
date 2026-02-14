@@ -7,9 +7,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from typing import Dict, Any, List, Optional
 import json
-import hashlib
 import time
 import uuid
+import urllib.request
 from datetime import datetime
 
 app = FastAPI()
@@ -25,9 +25,13 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.3
     stream: Optional[bool] = False
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:3b")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
 llm = ChatOllama(
-    model="phi3:mini",
-    base_url="http://ollama:11434",
+    model=CHAT_MODEL,
+    base_url=OLLAMA_BASE_URL,
     timeout=120.0,
     temperature=0.3,
     num_ctx=2048
@@ -68,7 +72,7 @@ def save_query_to_collection(query: str, answer: str, elapsed_time: float, stats
                 "total_turns": stats_context.get("total_turns", 0),
                 "total_documents": stats_context.get("total_documents", 0)
             },
-            "model": "phi3:mini",
+            "model": CHAT_MODEL,
             "agent": "agent3_analytics"
         }
         
@@ -90,15 +94,21 @@ def save_query_to_collection(query: str, answer: str, elapsed_time: float, stats
         return False
 
 
-def generate_embedding(text: str, dim: int = 768) -> List[float]:
-    """Generate hash-based embedding for RAG search."""
-    hash_obj = hashlib.sha256(text.lower().encode('utf-8'))
-    hash_bytes = hash_obj.digest()
-    embedding = []
-    for i in range(dim):
-        byte_val = hash_bytes[i % len(hash_bytes)]
-        embedding.append((byte_val / 255.0) * 2 - 1)
-    return embedding
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using native Ollama embeddings API."""
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "prompt": text
+    }
+    request = urllib.request.Request(
+        url=f"{OLLAMA_BASE_URL}/api/embeddings",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    return result.get("embedding", [])
 
 
 def analyze_conversations(query: str = "") -> Dict[str, Any]:
@@ -399,7 +409,7 @@ Odpowiedź (zwięzła, z konkretnymi liczbami):"""
         try:
             response = llm.invoke(prompt)
             answer = response.content if hasattr(response, 'content') else str(response)
-            answer = f"{answer}\n\nOdpowiedź wygenerowana przez phi3:mini"
+            answer = f"{answer}\n\nOdpowiedź wygenerowana przez {CHAT_MODEL}"
         except Exception as e:
             answer = f"OGÓLNE STATYSTYKI\n\n{context}\n\n⚠️ LLM niedostępny: {str(e)}"
         
