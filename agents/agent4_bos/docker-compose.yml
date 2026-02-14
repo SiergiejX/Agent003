@@ -6,6 +6,8 @@ services:
       - "8004:8000"
     networks:
       - ai_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - COLLECTION=zapytania_agent_4
 

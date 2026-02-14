@@ -29,3 +29,13 @@ qdrant/backups/
 # system Windows
 Thumbs.db
 Desktop.ini
+agents/agent3_analytics/init_collections.py
+agents/agent3_analytics/load_sample_data.py
+agents/agent3_analytics/AGENT3_PROMPT_GUIDE.md
+.gitignore
+.gitignore
+agents/agent3_analytics/IMPLEMENTATION_SUMMARY.md
+agents/agent3_analytics/test_agent3_analytics.ps1
+agents/agent3_analytics/add_data.bat
+agents/agent3_analytics/generate_data.py
+agents/agent3_analytics/reload_data.bat

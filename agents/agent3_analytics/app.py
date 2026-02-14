@@ -44,11 +44,112 @@ client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 # Available collections
 COLLECTIONS = {
-    "conversations": "agent1_conversations",
-    "turns": "agent1_turns", 
-    "knowledge": "BazaWiedzy",
-    "analytics_queries": "agent3_analitics"
+    
+    "analytics_queries": "agent3_analitics",
+    # Agent 3 Analytics collections
+    "a3_conversations": "a3_conversations_anon",
+    "a3_messages": "a3_messages_anon",
+    "a3_events": "a3_events",
+    "a3_handoff_cases": "a3_handoff_cases_anon",
+    "a3_failures": "a3_failures_anon",
+    "a3_feedback": "a3_feedback_anon",
+    "a3_intent_catalog": "a3_intent_catalog",
+    "a3_sentiment_events": "a3_sentiment_events",
+    "a3_ticket_metrics": "a3_ticket_metrics_anon",
+    "a3_suggestions": "a3_suggestions"
 }
+
+# Agent 3 Analytics System Prompt
+AGENT3_SYSTEM_PROMPT = """Jesteś zaawansowanym agentem analitycznym (Agent 3) odpowiedzialnym za usprawnianie działania chatbotów BOS i procesów Biura Obsługi Studenta.
+
+DOSTĘPNE DANE (wyłącznie zanonimizowane):
+- a3_conversations_anon: zanonimizowane rozmowy z metadanymi (intent, czas trwania, status rozwiązania)
+- a3_messages_anon: zanonimizowane wiadomości (bez treści osobowych)
+- a3_events: zdarzenia pipeline (retrieval_score, handoff, błędy)
+- a3_handoff_cases_anon: przypadki eskalacji do człowieka
+- a3_failures_anon: błędy systemu
+- a3_feedback_anon: feedback użytkowników (CSAT, sentiment)
+
+ZAKRES ANALIZY: ostatnie 7 dni
+
+GŁÓWNE ZADANIA ANALITYCZNE:
+
+1. ANALIZA INTENTÓW - wykryj:
+   - TOP 5 intentów z największym wzrostem liczby rozmów (porównaj z poprzednim okresem)
+   - TOP 5 intentów o najgorszej jakości obsługi:
+     * niski retrieval_top_score (<0.5)
+     * wysoki handoff_rate (>30%)
+     * dużo negatywnego feedbacku (CSAT <3.0)
+     * długi czas rozwiązania (>10 min)
+
+2. ANALIZA ESKALACJI:
+   - Zidentyfikuj 3 najczęstsze przyczyny eskalacji do człowieka
+   - Przeanalizuj powody: brak odpowiedzi w KB, niejasny intent, prośba użytkownika, błąd techniczny
+
+3. REKOMENDACJE:
+   - Wygeneruj 5 konkretnych rekomendacji usprawnień:
+     * dodanie/aktualizacja dokumentów w bazie wiedzy
+     * poprawa rozpoznawania intentów
+     * usprawnienia techniczne
+     * szkolenia dla operatorów BOS
+
+FORMAT ODPOWIEDZI:
+
+1. PODSUMOWANIE WYKONAWCZE (maksymalnie 10 zdań):
+   - Kluczowe metryki systemu
+   - Najważniejsze wnioski z analizy
+   - Krytyczne problemy wymagające uwagi
+
+2. TABELA METRYK PER INTENT:
+   | Intent | Rozmowy | Wzrost% | Avg Score | Handoff% | Avg CSAT | Avg Time |
+   |--------|---------|---------|-----------|----------|----------|----------|
+   | ...    | ...     | ...     | ...       | ...      | ...      | ...      |
+
+3. TOP 3 PRZYCZYNY ESKALACJI:
+   - Przyczyna 1: [opis] (liczba przypadków: X)
+   - Przyczyna 2: [opis] (liczba przypadków: Y)
+   - Przyczyna 3: [opis] (liczba przypadków: Z)
+
+4. REKOMENDACJE (format JSON):
+```json
+[
+  {
+    "recommendation_id": "REC-001",
+    "priority": "HIGH|MEDIUM|LOW",
+    "category": "KNOWLEDGE_BASE|INTENT_RECOGNITION|TECHNICAL|TRAINING",
+    "title": "Krótki tytuł rekomendacji",
+    "description": "Szczegółowy opis problemu i sugerowanego rozwiązania",
+    "expected_impact": "Oczekiwany wpływ na metryki",
+    "effort": "Szacowany nakład pracy: HIGH|MEDIUM|LOW",
+    "affected_intents": ["INTENT1", "INTENT2"],
+    "implementation_steps": ["Krok 1", "Krok 2", "Krok 3"]
+  }
+]
+```
+
+ZASADY PRACY:
+
+✅ ZAWSZE:
+- Bazuj WYŁĄCZNIE na rzeczywistych danych z kolekcji
+- Podawaj KONKRETNE LICZBY i metryki
+- Używaj zanonimizowanych identyfikatorów (conversation_id_anon, user_id_anon)
+- Obliczaj wzrosty procentowe względem poprzedniego okresu
+- Weryfikuj wszystkie obliczenia
+
+❌ NIGDY:
+- NIE zgaduj brakujących danych
+- NIE używaj danych osobowych (imiona, nazwiska, numery studentów)
+- NIE dodawaj fikcyjnych metryk
+- NIE przekraczaj 10 zdań w podsumowaniu
+
+METRYKI KLUCZOWE:
+- retrieval_top_score: podobieństwo do najlepszego dokumentu (0.0-1.0)
+- handoff_rate: % rozmów eskalowanych do człowieka
+- CSAT: satysfakcja użytkownika (1.0-5.0)
+- resolution_time: czas rozwiązania rozmowy (minuty)
+- intent_confidence: pewność klasyfikacji intentu (0.0-1.0)
+
+W przypadku braku danych w którejkolwiek kolekcji, wyraźnie to zaznacz i pracuj z dostępnymi danymi."""
 
 
 def save_query_to_collection(query: str, answer: str, elapsed_time: float, stats_context: Dict[str, Any]):
@@ -291,6 +392,279 @@ def analyze_knowledge_base(query: str = "") -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+def perform_deep_analytics() -> Dict[str, Any]:
+    """Perform comprehensive analytics on Agent 3 collections for last 7 days."""
+    from datetime import datetime, timedelta
+    
+    results = {
+        "data_availability": {},
+        "intent_metrics": {},
+        "escalation_analysis": {},
+        "quality_issues": [],
+        "growth_trends": [],
+        "error": None
+    }
+    
+    try:
+        # Calculate 7-day window
+        now = datetime.now()
+        seven_days_ago = now - timedelta(days=7)
+        
+        # Query a3_conversations_anon
+        try:
+            conversations = client.scroll(
+                collection_name=COLLECTIONS["a3_conversations"],
+                limit=1000,
+                with_payload=True
+            )[0]
+            results["data_availability"]["conversations"] = len(conversations)
+            
+            # Analyze by intent
+            intent_data = {}
+            for conv in conversations:
+                payload = conv.payload
+                intent = payload.get("primary_intent", "UNKNOWN")
+                
+                if intent not in intent_data:
+                    intent_data[intent] = {
+                        "count": 0,
+                        "resolved": 0,
+                        "total_duration": 0,
+                        "durations": [],
+                        "handoffs": 0
+                    }
+                
+                intent_data[intent]["count"] += 1
+                if payload.get("resolved"):
+                    intent_data[intent]["resolved"] += 1
+                
+                duration = payload.get("duration_min", 0)
+                intent_data[intent]["total_duration"] += duration
+                intent_data[intent]["durations"].append(duration)
+                
+                if payload.get("handoff_to_human"):
+                    intent_data[intent]["handoffs"] += 1
+            
+            results["intent_metrics"] = intent_data
+            
+        except Exception as e:
+            results["data_availability"]["conversations"] = f"Error: {str(e)}"
+        
+        # Query a3_events
+        try:
+            events = client.scroll(
+                collection_name=COLLECTIONS["a3_events"],
+                limit=1000,
+                with_payload=True
+            )[0]
+            results["data_availability"]["events"] = len(events)
+            
+            # Analyze retrieval scores by intent
+            retrieval_by_intent = {}
+            for event in events:
+                payload = event.payload
+                intent = payload.get("intent", "UNKNOWN")
+                score = payload.get("retrieval_top_score")
+                
+                if score is not None:
+                    if intent not in retrieval_by_intent:
+                        retrieval_by_intent[intent] = []
+                    retrieval_by_intent[intent].append(score)
+            
+            results["retrieval_scores"] = retrieval_by_intent
+            
+        except Exception as e:
+            results["data_availability"]["events"] = f"Error: {str(e)}"
+        
+        # Query a3_handoff_cases_anon
+        try:
+            handoffs = client.scroll(
+                collection_name=COLLECTIONS["a3_handoff_cases"],
+                limit=1000,
+                with_payload=True
+            )[0]
+            results["data_availability"]["handoff_cases"] = len(handoffs)
+            
+            # Analyze handoff reasons
+            handoff_reasons = {}
+            for handoff in handoffs:
+                payload = handoff.payload
+                reason = payload.get("handoff_reason", "UNKNOWN")
+                handoff_reasons[reason] = handoff_reasons.get(reason, 0) + 1
+            
+            results["escalation_analysis"]["reasons"] = handoff_reasons
+            
+        except Exception as e:
+            results["data_availability"]["handoff_cases"] = f"Error: {str(e)}"
+        
+        # Query a3_feedback_anon
+        try:
+            feedbacks = client.scroll(
+                collection_name=COLLECTIONS["a3_feedback"],
+                limit=1000,
+                with_payload=True
+            )[0]
+            results["data_availability"]["feedback"] = len(feedbacks)
+            
+            # Analyze CSAT by intent
+            csat_by_intent = {}
+            for feedback in feedbacks:
+                payload = feedback.payload
+                intent = payload.get("intent", "UNKNOWN")
+                csat = payload.get("csat_score")
+                
+                if csat is not None:
+                    if intent not in csat_by_intent:
+                        csat_by_intent[intent] = []
+                    csat_by_intent[intent].append(csat)
+            
+            results["csat_scores"] = csat_by_intent
+            
+        except Exception as e:
+            results["data_availability"]["feedback"] = f"Error: {str(e)}"
+        
+        # Query a3_failures_anon
+        try:
+            failures = client.scroll(
+                collection_name=COLLECTIONS["a3_failures"],
+                limit=1000,
+                with_payload=True
+            )[0]
+            results["data_availability"]["failures"] = len(failures)
+            
+        except Exception as e:
+            results["data_availability"]["failures"] = f"Error: {str(e)}"
+        
+        # Calculate combined metrics per intent
+        combined_metrics = []
+        for intent, data in intent_data.items():
+            count = data["count"]
+            
+            # Calculate averages
+            avg_duration = data["total_duration"] / count if count > 0 else 0
+            resolution_rate = (data["resolved"] / count * 100) if count > 0 else 0
+            handoff_rate = (data["handoffs"] / count * 100) if count > 0 else 0
+            
+            # Get retrieval scores
+            avg_retrieval = 0
+            if intent in retrieval_by_intent and retrieval_by_intent[intent]:
+                avg_retrieval = sum(retrieval_by_intent[intent]) / len(retrieval_by_intent[intent])
+            
+            # Get CSAT
+            avg_csat = 0
+            if intent in csat_by_intent and csat_by_intent[intent]:
+                avg_csat = sum(csat_by_intent[intent]) / len(csat_by_intent[intent])
+            
+            combined_metrics.append({
+                "intent": intent,
+                "conversations": count,
+                "avg_duration_min": round(avg_duration, 2),
+                "resolution_rate": round(resolution_rate, 1),
+                "handoff_rate": round(handoff_rate, 1),
+                "avg_retrieval_score": round(avg_retrieval, 3),
+                "avg_csat": round(avg_csat, 2)
+            })
+        
+        # Sort by conversation count (descending)
+        combined_metrics.sort(key=lambda x: x["conversations"], reverse=True)
+        results["combined_metrics"] = combined_metrics
+        
+        return results
+        
+    except Exception as e:
+        results["error"] = str(e)
+        return results
+
+
+def save_recommendations_to_collection(recommendations: List[Dict[str, Any]]) -> bool:
+    """Save recommendations to a3_suggestions collection."""
+    try:
+        points = []
+        for rec in recommendations:
+            rec_id = rec.get("recommendation_id", str(uuid.uuid4()))
+            
+            # Generate embedding from recommendation text
+            text_to_embed = f"{rec.get('title', '')} {rec.get('description', '')}"
+            vector = generate_embedding(text_to_embed)
+            
+            # Prepare payload
+            payload = {
+                "recommendation_id": rec_id,
+                "timestamp": datetime.now().isoformat(),
+                "priority": rec.get("priority", "MEDIUM"),
+                "category": rec.get("category", "GENERAL"),
+                "title": rec.get("title", ""),
+                "description": rec.get("description", ""),
+                "expected_impact": rec.get("expected_impact", ""),
+                "effort": rec.get("effort", "MEDIUM"),
+                "affected_intents": rec.get("affected_intents", []),
+                "implementation_steps": rec.get("implementation_steps", []),
+                "status": "PENDING"
+            }
+            
+            # Create point
+            point = PointStruct(
+                id=hash(rec_id) % (10 ** 8),
+                vector=vector,
+                payload=payload
+            )
+            points.append(point)
+        
+        # Upsert to collection
+        if points:
+            client.upsert(
+                collection_name=COLLECTIONS["a3_suggestions"],
+                points=points
+            )
+            return True
+        return False
+        
+    except Exception as e:
+        print(f"Error saving recommendations: {e}")
+        return False
+
+
+@app.post("/api/analytics/run")
+async def run_analytics():
+    """Run comprehensive analytics and save recommendations."""
+    try:
+        analytics_data = perform_deep_analytics()
+        
+        return {
+            "status": "success",
+            "data": analytics_data,
+            "message": "Analytics completed successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/api/recommendations/save")
+async def save_recommendations(recommendations: List[Dict[str, Any]]):
+    """Save recommendations to a3_suggestions collection."""
+    try:
+        success = save_recommendations_to_collection(recommendations)
+        if success:
+            return {
+                "status": "success",
+                "saved": len(recommendations),
+                "message": f"Successfully saved {len(recommendations)} recommendations"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Failed to save recommendations"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/api/tags")
 async def list_tags():
     """Ollama-compatible tags endpoint."""
@@ -348,14 +722,78 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
     
     start_time = time.time()
     
+    # Check if this is a deep analytics request
+    analytics_keywords = ["analiza", "raport", "rekomendacje", "wykryj", "intent", "eskalacj", "usprawn", 
+                         "wzrost", "jakość", "quality", "handoff", "top 5", "przyczyn"]
+    is_analytics_request = any(keyword in query_lower for keyword in analytics_keywords)
+    
     try:
-        # Get statistics
-        conv_stats = analyze_conversations("")
-        turn_stats = analyze_turns("")
-        kb_stats = analyze_knowledge_base("")
+        if is_analytics_request:
+            # Perform deep analytics
+            analytics_data = perform_deep_analytics()
+            
+            # Format analytics data for LLM
+            analytics_context = f"""DANE Z OSTATNICH 7 DNI:
+
+DOSTĘPNOŚĆ DANYCH:
+- Rozmowy (a3_conversations_anon): {analytics_data['data_availability'].get('conversations', 0)} rekordów
+- Zdarzenia (a3_events): {analytics_data['data_availability'].get('events', 0)} rekordów
+- Eskalacje (a3_handoff_cases): {analytics_data['data_availability'].get('handoff_cases', 0)} rekordów
+- Feedback (a3_feedback): {analytics_data['data_availability'].get('feedback', 0)} rekordów
+- Błędy (a3_failures): {analytics_data['data_availability'].get('failures', 0)} rekordów
+
+METRYKI PER INTENT:
+"""
+            
+            # Add combined metrics
+            if analytics_data.get('combined_metrics'):
+                for metric in analytics_data['combined_metrics'][:10]:  # Top 10
+                    analytics_context += f"""
+Intent: {metric['intent']}
+  - Rozmowy: {metric['conversations']}
+  - Średni czas: {metric['avg_duration_min']} min
+  - Resolution rate: {metric['resolution_rate']}%
+  - Handoff rate: {metric['handoff_rate']}%
+  - Avg retrieval score: {metric['avg_retrieval_score']}
+  - Avg CSAT: {metric['avg_csat']}
+"""
+            
+            # Add escalation reasons
+            if analytics_data.get('escalation_analysis', {}).get('reasons'):
+                analytics_context += f"\nPRZYCZYNY ESKALACJI:\n"
+                for reason, count in sorted(analytics_data['escalation_analysis']['reasons'].items(), 
+                                          key=lambda x: x[1], reverse=True):
+                    analytics_context += f"- {reason}: {count} przypadków\n"
+            
+            # Construct prompt with system instructions and data
+            full_prompt = f"""{AGENT3_SYSTEM_PROMPT}
+
+{analytics_context}
+
+ZAPYTANIE UŻYTKOWNIKA:
+{query}
+
+Przeanalizuj powyższe dane i wygeneruj odpowiedź zgodnie z formatem określonym w instrukcjach systemowych.
+Jeśli dane są niepełne lub brakuje kolekcji, wyraźnie to zaznacz w podsumowaniu."""
+
+            try:
+                response = llm.invoke(full_prompt)
+                answer = response.content if hasattr(response, 'content') else str(response)
+                answer = f"{answer}\n\n---\nOdpowiedź wygenerowana przez {CHAT_MODEL} na podstawie rzeczywistych danych"
+            except Exception as e:
+                answer = f"{analytics_context}\n\n⚠️ LLM niedostępny: {str(e)}"
+            
+            total_conversations = analytics_data.get('data_availability', {}).get('conversations', 0)
+            total_turns = 0
+            total_documents = 0
         
-        # Prepare context
-        context = f"""STATYSTYKI SYSTEMU:
+        else:
+            # Standard statistics query (backward compatibility)
+            conv_stats = analyze_conversations("")
+            turn_stats = analyze_turns("")
+            kb_stats = analyze_knowledge_base("")
+            
+            context = f"""STATYSTYKI SYSTEMU:
 
 ROZMOWY (całe konwersacje z chatbotem): {conv_stats.get('total_conversations', 0)} total, {conv_stats.get('resolution', {}).get('resolved', 0)} rozwiązanych
 Średni czas: {conv_stats.get('avg_duration_min', 0):.1f}min, CSAT: {conv_stats.get('avg_csat', 0):.2f}
@@ -367,7 +805,7 @@ Sentyment: {turn_stats.get('avg_sentiment', 0):.2f}, Pilność: {turn_stats.get(
 BAZA WIEDZY: {kb_stats.get('total_documents', 0)} dokumentów
 Kategorie: {list(kb_stats.get('by_category', {}).keys())}"""
 
-        prompt = f"""Jesteś agentem analitycznym systemu obsługi studentów. Dysponujesz następującymi danymi:
+            prompt = f"""Jesteś agentem analitycznym systemu obsługi studentów. Dysponujesz następującymi danymi:
 
 {context}
 
@@ -405,13 +843,17 @@ PRZYKŁADY DOBRYCH ODPOWIEDZI:
 Pytanie: {query}
 
 Odpowiedź (zwięzła, z konkretnymi liczbami):"""
-        
-        try:
-            response = llm.invoke(prompt)
-            answer = response.content if hasattr(response, 'content') else str(response)
-            answer = f"{answer}\n\nOdpowiedź wygenerowana przez {CHAT_MODEL}"
-        except Exception as e:
-            answer = f"OGÓLNE STATYSTYKI\n\n{context}\n\n⚠️ LLM niedostępny: {str(e)}"
+            
+            try:
+                response = llm.invoke(prompt)
+                answer = response.content if hasattr(response, 'content') else str(response)
+                answer = f"{answer}\n\nOdpowiedź wygenerowana przez {CHAT_MODEL}"
+            except Exception as e:
+                answer = f"OGÓLNE STATYSTYKI\n\n{context}\n\n⚠️ LLM niedostępny: {str(e)}"
+            
+            total_conversations = conv_stats.get('total_conversations', 0)
+            total_turns = turn_stats.get('total_turns', 0)
+            total_documents = kb_stats.get('total_documents', 0)
         
         elapsed_time = time.time() - start_time
         answer = f"{answer}\n\nCzas odpowiedzi: {elapsed_time:.2f}s"
@@ -422,9 +864,9 @@ Odpowiedź (zwięzła, z konkretnymi liczbami):"""
             answer=answer,
             elapsed_time=elapsed_time,
             stats_context={
-                "total_conversations": conv_stats.get('total_conversations', 0),
-                "total_turns": turn_stats.get('total_turns', 0),
-                "total_documents": kb_stats.get('total_documents', 0)
+                "total_conversations": total_conversations,
+                "total_turns": total_turns,
+                "total_documents": total_documents
             }
         )
         

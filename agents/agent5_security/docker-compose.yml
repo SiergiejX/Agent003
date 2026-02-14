@@ -6,6 +6,8 @@ services:
       - "8005:8000"
     networks:
       - ai_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - COLLECTION=agent5_audit
 
