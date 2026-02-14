@@ -1,0 +1,519 @@
+[
+    {
+        "id": "b3f5d0b8d7c1a001",
+        "type": "tab",
+        "label": "Agent analityczny RAG (Ollama nomic-embed-text 768 + Qdrant)",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "inject_15a51cac38cc",
+        "type": "inject",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Test: RAG (stypendia - statystyki)",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "session:test",
+        "payload": "{\"sessionId\": \"sess-001\", \"userId\": \"analityk\", \"text\": \"Podaj statystyki zapyta\\u0144 o stypendia (liczba, trendy, najcz\\u0119stsze tematy).\"}",
+        "payloadType": "json",
+        "x": 150,
+        "y": 60,
+        "wires": [
+            [
+                "init_session"
+            ]
+        ]
+    },
+    {
+        "id": "inject_cbf05cfb5276",
+        "type": "inject",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Test: RAG (stypendia - przykładowe treści)",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "session:test",
+        "payload": "{\"sessionId\":\"sess-001\",\"userId\":\"analityk\",\"text\":\"Jakie są najczęstsze pytania studentów o stypendia? Podaj przykłady.\"}",
+        "payloadType": "json",
+        "x": 180,
+        "y": 120,
+        "wires": [
+            [
+                "init_session"
+            ]
+        ]
+    },
+    {
+        "id": "inject_201d955e3e8f",
+        "type": "inject",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Test: poza zakresem (Einstein)",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "session:test",
+        "payload": "{\"sessionId\": \"sess-001\", \"userId\": \"analityk\", \"text\": \"Napisz kr\\u00f3tki opis teorii wzgl\\u0119dno\\u015bci Einsteina.\"}",
+        "payloadType": "json",
+        "x": 170,
+        "y": 180,
+        "wires": [
+            [
+                "init_session"
+            ]
+        ]
+    },
+    {
+        "id": "init_session",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Init session + normalize msg",
+        "func": "\nvar p = msg.payload || {};\nvar sessionId = p.sessionId || (msg.topic && String(msg.topic).indexOf(\":\") !== -1 ? String(msg.topic).split(\":\")[1] : null) || (\"sess-\" + Date.now());\nvar userId = p.userId || \"analityk\";\nvar text = p.text || p.query || p.question || \"\";\n\nmsg.session = {\n    id: sessionId,\n    userId: userId,\n    startedAt: (msg.session && msg.session.startedAt) ? msg.session.startedAt : Date.now()\n};\nmsg.query = {\n    text: text,\n    timestamp: Date.now(),\n    lang: \"pl\"\n};\nmsg.meta = msg.meta || {};\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 120,
+        "wires": [
+            [
+                "create_history"
+            ]
+        ]
+    },
+    {
+        "id": "create_history",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Tworzy historię sesji (jeśli brak)",
+        "func": "\nvar key = \"history_\" + msg.session.id;\nvar history = flow.get(key);\nif (!history) {\n    history = {\n        sessionId: msg.session.id,\n        userId: msg.session.userId,\n        createdAt: Date.now(),\n        turns: []\n    };\n    flow.set(key, history);\n}\nmsg.history = history;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 810,
+        "y": 120,
+        "wires": [
+            [
+                "analyze_query"
+            ]
+        ]
+    },
+    {
+        "id": "analyze_query",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Analizuje zapytanie (domena?)",
+        "func": "\nvar text = (msg.query && msg.query.text ? msg.query.text : \"\").toLowerCase();\n\n// Agent analityczny: tylko lokalne dane.\n// In-domain: stypendia, BOS, tickety, procedury, KPI, itd.\nvar inDomainKeywords = [\n    \"stypend\", \"wniosek\", \"zapyta\", \"statystyk\", \"trend\",\n    \"ticket\", \"incydent\", \"bos\", \"procedur\", \"kpi\", \"mttr\", \"mttd\",\n    \"baza\", \"wiedzy\", \"reklamac\", \"problem\", \"błąd\", \"error\", \"log\"\n];\n\nvar inDomain = false;\nfor (var i = 0; i < inDomainKeywords.length; i++) {\n    if (text.indexOf(inDomainKeywords[i]) !== -1) {\n        inDomain = true;\n        break;\n    }\n}\n\nmsg.routing = {\n    fetch: inDomain,\n    sources: []\n};\n\n// Routing kolekcji: minimalnie dla stypendiów bierzemy turns + baza\nif (inDomain) {\n    if (text.indexOf(\"stypend\") !== -1) {\n        msg.routing.sources = [\n            \"agent1_turns\",\n            \"BazaWiedzy\"\n        ];\n    } else {\n        msg.routing.sources = [\n            \"agent1_conversations\",\n            \"agent1_turns\",\n            \"agent2_tickets\",\n            \"agent4_bos_querries\",\n            \"BazaWiedzy\"\n        ];\n    }\n}\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1090,
+        "y": 120,
+        "wires": [
+            [
+                "switch_domain"
+            ]
+        ]
+    },
+    {
+        "id": "switch_domain",
+        "type": "switch",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "W domenie lokalnych danych?",
+        "property": "routing.fetch",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "true"
+            },
+            {
+                "t": "false"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 170,
+        "y": 280,
+        "wires": [
+            [
+                "build_search_plan"
+            ],
+            [
+                "answer_out_of_scope"
+            ]
+        ]
+    },
+    {
+        "id": "answer_out_of_scope",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Poza zakresem (brak podstaw w danych)",
+        "func": "\nmsg.answer = [\n  \"Nie mogę udzielić odpowiedzi na to pytanie, ponieważ nie dotyczy ono danych dostępnych w lokalnych kolekcjach.\",\n  \"\",\n  \"Ten agent jest agentem analitycznym i działa wyłącznie na podstawie danych z Qdrant (tickety, rozmowy, baza wiedzy).\",\n  \"\",\n  \"Jeśli chcesz, zadaj pytanie związane z analizą danych, np.:\",\n  \"- statystyki i trendy zapytań o stypendia,\",\n  \"- analiza ticketów / incydentów,\",\n  \"- procedury BOS i treści z BazyWiedzy.\"\n].join(\"\\n\");\n\nmsg.results = [];\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 560,
+        "y": 560,
+        "wires": [
+            [
+                "update_history"
+            ]
+        ]
+    },
+    {
+        "id": "build_search_plan",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Buduje plan wyszukiwania (RAG)",
+        "func": "\nmsg.searchPlan = {\n    sessionId: msg.session.id,\n    query: msg.query.text,\n    sources: msg.routing.sources,\n    topK: 12\n};\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 560,
+        "y": 280,
+        "wires": [
+            [
+                "embed_prepare"
+            ]
+        ]
+    },
+    {
+        "id": "embed_prepare",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Ollama: prepare embeddings request (nomic-embed-text)",
+        "func": "\nmsg.method = \"POST\";\nmsg.url = \"http://ollama:11434/api/embeddings\";\nmsg.headers = {\"Content-Type\":\"application/json\"};\n\nmsg.payload = {\n    model: \"nomic-embed-text\",\n    prompt: msg.searchPlan.query\n};\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 930,
+        "y": 280,
+        "wires": [
+            [
+                "http_ollama_embed"
+            ]
+        ]
+    },
+    {
+        "id": "http_ollama_embed",
+        "type": "http request",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "HTTP -> Ollama embeddings",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": true,
+        "headers": [],
+        "x": 1280,
+        "y": 280,
+        "wires": [
+            [
+                "embed_extract"
+            ]
+        ]
+    },
+    {
+        "id": "embed_extract",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Extract embedding",
+        "func": "\nif (!msg.payload || !msg.payload.embedding) {\n    node.error(\"Brak embedding w odpowiedzi Ollama\", msg);\n    msg.embedding = null;\n    return msg;\n}\n\nmsg.embedding = msg.payload.embedding;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 340,
+        "wires": [
+            [
+                "prep_split"
+            ]
+        ]
+    },
+    {
+        "id": "prep_split",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Przygotuj split + dynamic join count",
+        "func": "\nvar sources = msg.searchPlan.sources || [];\nmsg.payload = sources;\n\nmsg.parts = msg.parts || {};\nmsg.parts.count = sources.length;\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 760,
+        "y": 340,
+        "wires": [
+            [
+                "fanout_split"
+            ]
+        ]
+    },
+    {
+        "id": "fanout_split",
+        "type": "split",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Fan-out (split sources)",
+        "splt": "\\n",
+        "spltType": "str",
+        "arraySplt": 1,
+        "arraySpltType": "len",
+        "stream": false,
+        "addname": "source",
+        "x": 1020,
+        "y": 340,
+        "wires": [
+            [
+                "set_collection"
+            ]
+        ]
+    },
+    {
+        "id": "set_collection",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Set collection name",
+        "func": "\nmsg.collection = msg.payload;\nmsg.topK = msg.searchPlan.topK || 12;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1230,
+        "y": 340,
+        "wires": [
+            [
+                "qdrant_prepare"
+            ]
+        ]
+    },
+    {
+        "id": "qdrant_prepare",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Qdrant: prepare search request",
+        "func": "\nif (!msg.embedding || !Array.isArray(msg.embedding)) {\n    node.error(\"Brak embedding - nie mogę przeszukać Qdrant\", msg);\n    msg.payload = { source: msg.collection, data: [], meta: { error: \"no_embedding\" } };\n    return msg;\n}\n\nmsg.method = \"POST\";\nmsg.url = \"http://qdrant:6333/collections/\" + msg.collection + \"/points/search\";\nmsg.headers = {\"Content-Type\":\"application/json\"};\n\nmsg.payload = {\n    vector: msg.embedding,\n    limit: msg.topK || 12,\n    with_payload: true,\n    with_vector: false\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 400,
+        "wires": [
+            [
+                "http_qdrant_search"
+            ]
+        ]
+    },
+    {
+        "id": "http_qdrant_search",
+        "type": "http request",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "HTTP -> Qdrant search :6333",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": true,
+        "headers": [],
+        "x": 810,
+        "y": 400,
+        "wires": [
+            [
+                "qdrant_normalize"
+            ]
+        ]
+    },
+    {
+        "id": "qdrant_normalize",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Normalize Qdrant results",
+        "func": "\nvar collection = msg.collection || \"unknown\";\nvar res = msg.payload || {};\nvar points = res.result || [];\n\nvar data = points.map(function(p) {\n    var payload = p.payload || {};\n    var text = payload.text_redacted || payload.text || payload.content || payload.page_content || payload.message || JSON.stringify(payload);\n\n    return {\n        id: String(p.id),\n        text: text,\n        score: p.score,\n        payload: payload\n    };\n});\n\nmsg.payload = {\n    source: collection,\n    data: data,\n    meta: {\n        sessionId: msg.session.id,\n        query: msg.searchPlan.query,\n        at: Date.now()\n    }\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1070,
+        "y": 400,
+        "wires": [
+            [
+                "join_results"
+            ]
+        ]
+    },
+    {
+        "id": "join_results",
+        "type": "join",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Join wyników (dynamiczny)",
+        "mode": "custom",
+        "build": "array",
+        "property": "payload",
+        "propertyType": "msg",
+        "key": "topic",
+        "joiner": "\\n",
+        "joinerType": "str",
+        "accumulate": false,
+        "timeout": "3",
+        "count": "",
+        "reduceRight": false,
+        "reduceExp": "",
+        "reduceInit": "",
+        "reduceInitType": "",
+        "reduceFixup": "",
+        "x": 1320,
+        "y": 400,
+        "wires": [
+            [
+                "format_answer"
+            ]
+        ]
+    },
+    {
+        "id": "format_answer",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Formatuje wyniki RAG -> odpowiedź (retrieval)",
+        "func": "\nvar results = Array.isArray(msg.payload) ? msg.payload : [];\nmsg.results = results;\n\nvar totalItems = 0;\nfor (var i = 0; i < results.length; i++) {\n    var r = results[i];\n    if (r && r.data && Array.isArray(r.data)) {\n        totalItems += r.data.length;\n    }\n}\n\nif (totalItems === 0) {\n    msg.answer = [\n        \"Nie znalazłem danych w lokalnych kolekcjach Qdrant, które pozwoliłyby odpowiedzieć na to pytanie.\",\n        \"\",\n        \"Możliwe powody:\",\n        \"- w kolekcjach nie ma treści o tym temacie,\",\n        \"- zapytanie jest zbyt ogólne,\",\n        \"- lub indeks wektorowy nie jest spójny (wymiar embeddingów).\"\n    ].join(\"\\n\");\n    return msg;\n}\n\n// Zestawienie\nvar lines = [];\nfor (var j = 0; j < results.length; j++) {\n    var rr = results[j];\n    if (!rr || !rr.source) continue;\n    if (!rr.data || rr.data.length === 0) continue;\n\n    lines.push(\"Źródło: \" + rr.source);\n    for (var k = 0; k < Math.min(6, rr.data.length); k++) {\n        lines.push(\"- \" + rr.data[k].text + \" (score \" + rr.data[k].score + \")\");\n    }\n    lines.push(\"\");\n}\n\nmsg.answer = [\n    \"Znalezione fragmenty z lokalnych kolekcji (RAG):\",\n    \"\",\n    lines.join(\"\\n\"),\n    \"Następny krok: w tym miejscu możesz podać te fragmenty do LLM, żeby policzył statystyki i zsyntetyzował odpowiedź.\"\n].join(\"\\n\");\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 460,
+        "wires": [
+            [
+                "update_history"
+            ]
+        ]
+    },
+    {
+        "id": "update_history",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Aktualizuje historię sesji",
+        "func": "\nvar key = \"history_\" + msg.session.id;\nvar history = flow.get(key) || { sessionId: msg.session.id, turns: [] };\n\nhistory.turns.push({\n    at: Date.now(),\n    q: msg.query.text,\n    fetched: (msg.routing && msg.routing.fetch) ? true : false,\n    usedSources: (msg.routing && msg.routing.sources) ? msg.routing.sources : [],\n    resultsSummary: (msg.results || []).map(function (r) {\n        return { source: r.source, items: (r.data || []).length };\n    }),\n    answerPreview: (msg.answer || \"\").slice(0, 220)\n});\n\nflow.set(key, history);\nmsg.history = history;\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 930,
+        "y": 460,
+        "wires": [
+            [
+                "build_response"
+            ]
+        ]
+    },
+    {
+        "id": "build_response",
+        "type": "function",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Buduje response (debug-friendly)",
+        "func": "\nmsg.payload = {\n    session: msg.session,\n    query: msg.query,\n    routing: msg.routing,\n    answer: msg.answer,\n    results: msg.results,\n    historyTurns: (msg.history && msg.history.turns) ? msg.history.turns.length : 0\n};\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1200,
+        "y": 460,
+        "wires": [
+            [
+                "debug_out",
+                "debug_hist"
+            ]
+        ]
+    },
+    {
+        "id": "debug_out",
+        "type": "debug",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Odpowiedź (payload)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1480,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "debug_hist",
+        "type": "debug",
+        "z": "b3f5d0b8d7c1a001",
+        "name": "Historia sesji (turns)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "history",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1480,
+        "y": 520,
+        "wires": []
+    }
+]
