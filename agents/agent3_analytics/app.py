@@ -40,6 +40,7 @@ KONTEKST: Jesteś częścią systemu dla uczelni wyższej. Analizujesz:
 2. DANE AKADEMICKIE - profile studentów, zdarzenia, kursy, retencja, kohorty
 3. SUPPORT - zgłoszenia, tickety, problemy studentów
 4. REGULAMINY - procedury, zasady, przepisy akademickie
+5. HISTORIA ZAPYTAŃ - własne zapytania i odpowiedzi, w tym statystyki wykrywania danych wrażliwych
 
 DOSTĘPNE DANE (zanonimizowane):
 CHATBOT:
@@ -60,12 +61,28 @@ SUPPORT:
 - zgłoszenia studentów (kategorie, czas rozwiązania, sentiment)
 - eskalacje i problemy
 
+HISTORIA ZAPYTAŃ ANALITYCZNYCH (a3_analytics_queries_history):
+- zapisane zapytania użytkowników i odpowiedzi
+- metadane zapytań (kategoria, czas odpowiedzi, źródła danych)
+- informacje o wykryciu danych wrażliwych:
+  * pii_info.pii_detected (bool) - czy wykryto PII
+  * pii_info.pii_types (array) - typy wykrytych danych: ["index", "pesel", "email"]
+  * pii_info.query_sanitized (bool) - czy zapytanie zostało oczyszczone
+- oczyszczone zapytania z etykietami:
+  * [INDEX] - zamiast numeru indeksu (5 cyfr)
+  * [PESEL] - zamiast numeru PESEL (11 cyfr)
+  * [MAIL] - zamiast adresu email
+
 ZADANIA:
 1. Analizuj trendy i wzorce (chatbot, akademickie, support)
 2. Identyfikuj przyczyny problemów (eskalacje, skreślenia, niska retencja)
 3. Generuj konkretne rekomendacje ulepszeń
 4. Monitoruj jakość obsługi i satysfakcję studentów
 5. Wykrywaj grupy ryzyka (studenci zagrożeni skreśleniem)
+6. Analizuj statystyki bezpieczeństwa:
+   - liczba prób wpisania danych wrażliwych (na podstawie pii_info w a3_analytics_queries_history)
+   - rozkład typów wykrytych danych (index, pesel, email)
+   - identyfikuj zapytania z etykietami [INDEX], [PESEL], [MAIL]
 
 ZASADY:
 ✅ ODPOWIADAJ WYŁĄCZNIE PO POLSKU
@@ -74,12 +91,49 @@ ZASADY:
 ✅ Formatuj odpowiedzi czytelnie (tabele, listy)
 ✅ Cytuj źródło informacji (nazwę kolekcji)
 ✅ Jeśli brak danych - powiedz "Brak danych w źródłach"
+✅ Analizując statystyki PII:
+   - sprawdź pole pii_info.pii_detected w kolekcji a3_analytics_queries_history
+   - zlicz typy z pii_info.pii_types (może być wiele typów w jednym zapytaniu)
+   - szukaj etykiet [INDEX], [PESEL], [MAIL] w zapisanych zapytaniach
 
 ❌ NIE odpowiadaj po angielsku ani w innych językach
 ❌ NIE wymyślaj danych spoza źródeł
 ❌ NIE zgaduj metryk
 ❌ NIE używaj wiedzy ogólnej - tylko dane ze źródeł
-❌ NIE używaj przykładów spoza kontekstu uczelni"""
+❌ NIE używaj przykładów spoza kontekstu uczelni
+
+SPECJALNE PRZYPADKI:
+📊 **Pytania o dane wrażliwe / PII:**
+Jeśli użytkownik pyta "ile było prób podania danych wrażliwych", "jakie dane wrażliwe były podawane" itp.:
+1. Przeszukuj TYLKO kolekcję a3_analytics_queries_history
+2. Zlicz rekordy gdzie pii_info.pii_detected = true
+3. Zgrupuj według pii_info.pii_types (może być wiele typów w jednym zapytaniu!)
+4. Podsumuj:
+   - Całkowita liczba prób podania PII
+   - Ile razy wykryto każdy typ: index (5 cyfr), pesel (11 cyfr), email
+   - Przykłady oczyszczonych zapytań z etykietami [INDEX], [PESEL], [MAIL]
+5. Format odpowiedzi:
+   ```
+   Wykryto X prób podania danych wrażliwych:
+   - Y razy: numer indeksu (5 cyfr)
+   - Z razy: numer PESEL (11 cyfr)  
+   - W razy: adres email
+   
+   Przykładowe zapytania (oczyszczone):
+   - [przykład 1 z etykietami]
+   - [przykład 2 z etykietami]
+   ```
+
+🔒 OCHRONA DANYCH WRAŻLIWYCH:
+❌ NIE GENERUJ numerów indeksów (5 cyfr: 12345, 67890, etc.)
+❌ NIE GENERUJ numerów PESEL (11 cyfr)
+❌ NIE GENERUJ adresów email
+❌ NIE GENERUJ żadnych fikcyjnych danych osobowych
+✅ Identyfikuj studentów WYŁĄCZNIE przez:
+   - "student_hash" (hash z danych źródłowych)
+   - kategorię (np. "studenci 3 roku Informatyki")
+   - grupę (np. "kohorta 2023")
+   - ogólne sformułowania (np. "grupa zagrożona", "studenci z niską retencją")"""
 
 # ============================================================================
 # MODELS
@@ -173,7 +227,7 @@ def save_query_to_collection(
     stats_context: Dict[str, Any],
     query_metadata: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """Save query and result to a3_analytics collection."""
+    """Save query and result to a3_analytics_queries_history collection."""
     try:
         query_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
@@ -213,7 +267,13 @@ def save_query_to_collection(
             "analytics_context": {
                 "analyzed_collections": metadata.get("collections_queried", []),
                 "records_analyzed": metadata.get("total_records", 0),
-                "time_range_days": metadata.get("time_range_days", 7)
+                "time_range_days": metadata.get("time_range_days", 7),
+                "retrieval_mode": metadata.get("retrieval_mode", "semantic_search")
+            },
+            "pii_info": {
+                "pii_detected": metadata.get("pii_detected", False),
+                "pii_types": metadata.get("pii_types", []),
+                "query_sanitized": metadata.get("pii_detected", False)
             },
             "model": CHAT_MODEL,
             "embedding_model": EMBEDDING_MODEL,
@@ -227,10 +287,10 @@ def save_query_to_collection(
             payload=payload
         )
         
-        client.upsert(collection_name="a3_analytics", points=[point])
+        client.upsert(collection_name="a3_analytics_queries_history", points=[point])
         
-        info = client.get_collection("a3_analytics")
-        print(f"[AGENT3] ✓ Saved query {query_id[:8]}... to a3_analytics | Total: {info.points_count}")
+        info = client.get_collection("a3_analytics_queries_history")
+        print(f"[AGENT3] ✓ Saved query {query_id[:8]}... to a3_analytics_queries_history | Total: {info.points_count}")
         return True
         
     except Exception as e:
@@ -247,16 +307,16 @@ async def health_check():
     try:
         collections = client.get_collections()
         qdrant_connected = True
-        a3_analytics_exists = any(c.name == "a3_analytics" for c in collections.collections)
+        a3_analytics_queries_history_exists = any(c.name == "a3_analytics_queries_history" for c in collections.collections)
     except:
         qdrant_connected = False
-        a3_analytics_exists = False
+        a3_analytics_queries_history_exists = False
     
     return {
         "status": "healthy",
         "agent": "agent3_analytics",
         "qdrant_connected": qdrant_connected,
-        "a3_analytics_exists": a3_analytics_exists,
+        "a3_analytics_queries_history_exists": a3_analytics_queries_history_exists,
         "model": CHAT_MODEL,
         "embedding_model": EMBEDDING_MODEL,
         "version": "2.0.0-rag"
@@ -319,12 +379,40 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
         print(f"[AGENT3] ⚠️ PII DETECTED - Query blocked!", flush=True)
         print(f"[AGENT3] Detected PII types: {[d['type'] for d in pii_check['detections']]}", flush=True)
         
-        # Log sanitized query (with PII redacted)
+        # Sanitize query (with PII replaced by labels)
         sanitized_query = pii_detector.sanitize_text(query)
         print(f"[AGENT3] Sanitized query: {sanitized_query}", flush=True)
         
         # Return warning to user
         warning_response = pii_check["warning_message"]
+        
+        # ========================================================================
+        # SAVE PII-BLOCKED QUERY TO HISTORY (with sanitized query)
+        # ========================================================================
+        print(f"[AGENT3] Saving PII-blocked query to history...", flush=True)
+        elapsed_time = 0.0  # No actual processing time
+        
+        save_query_to_collection(
+            query=sanitized_query,  # Save sanitized version with [INDEX], [PESEL], [MAIL]
+            answer=warning_response,
+            elapsed_time=elapsed_time,
+            stats_context={
+                "total_conversations": 0,
+                "total_turns": 0,
+                "total_documents": 0
+            },
+            query_metadata={
+                "collections_queried": [],
+                "total_records": 0,
+                "data_sources_used": [],
+                "time_range_days": 0,
+                "retrieval_mode": "blocked_pii",
+                "pii_detected": True,
+                "pii_types": [d['type'] for d in pii_check['detections']]
+            }
+        )
+        print(f"[AGENT3] ✓ PII-blocked query saved to history", flush=True)
+        # ========================================================================
         
         return {
             "id": f"chatcmpl-{int(time.time())}",
@@ -367,7 +455,7 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
             query=query,
             system_prompt=AGENT3_SYSTEM_PROMPT,
             llm_invoke_func=llm.invoke,
-            collections=None,  # Auto-select
+            collections=None,  # Auto-select (always includes a3_analytics_queries_history)
             time_range_days=7,
             conversation_history=conversation_history  # Include history for context
         )
@@ -385,7 +473,24 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
         answer += f"\n\n⏱️ Czas: {elapsed_time:.2f}s"
         answer += f"\n🤖 Model: {CHAT_MODEL} (RAG)"
         
-        # Save to a3_analytics
+        # ========================================================================
+        # PII DETECTION FOR ANSWER - Security check before saving
+        # ========================================================================
+        print(f"[AGENT3] Checking for PII in answer...", flush=True)
+        answer_pii_check = pii_detector.detect_pii(answer)
+        
+        if answer_pii_check["has_pii"]:
+            print(f"[AGENT3] ⚠️ PII DETECTED IN ANSWER - Sanitizing before save!", flush=True)
+            print(f"[AGENT3] Detected PII types: {[d['type'] for d in answer_pii_check['detections']]}", flush=True)
+            
+            # Sanitize answer before saving and returning
+            answer = pii_detector.sanitize_text(answer)
+            print(f"[AGENT3] ✓ Answer sanitized", flush=True)
+        else:
+            print(f"[AGENT3] ✓ No PII detected in answer", flush=True)
+        # ========================================================================
+        
+        # Save to a3_analytics_queries_history
         query_metadata = {
             "collections_queried": sources,
             "total_records": metadata.get('total_results', 0),
@@ -455,7 +560,7 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
 
 @app.get("/api/analytics/history")
 async def get_analytics_history(limit: int = 50, category: Optional[str] = None):
-    """Get query history from a3_analytics."""
+    """Get query history from a3_analytics_queries_history."""
     try:
         filter_condition = None
         if category:
@@ -464,7 +569,7 @@ async def get_analytics_history(limit: int = 50, category: Optional[str] = None)
             }
         
         points = client.scroll(
-            collection_name="a3_analytics",
+            collection_name="a3_analytics_queries_history",
             limit=limit,
             with_payload=True,
             with_vectors=False,
@@ -500,7 +605,7 @@ async def get_analytics_stats():
     """Get statistics about query history."""
     try:
         points = client.scroll(
-            collection_name="a3_analytics",
+            collection_name="a3_analytics_queries_history",
             limit=1000,
             with_payload=True,
             with_vectors=False
@@ -556,7 +661,7 @@ async def search_analytics_history(q: str, limit: int = 10):
         query_vector = generate_embedding(q)
         
         import requests
-        search_url = f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/a3_analytics/points/search"
+        search_url = f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/a3_analytics_queries_history/points/search"
         search_payload = {
             "vector": query_vector,
             "limit": limit,

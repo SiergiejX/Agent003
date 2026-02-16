@@ -152,6 +152,10 @@ class PIIDetector:
     def sanitize_text(self, text: str) -> str:
         """
         Remove detected PII from text (for logging/storage).
+        Replaces:
+        - index numbers -> [INDEX]
+        - PESEL numbers -> [PESEL]
+        - email addresses -> [MAIL]
         """
         sanitized = text
         detection_result = self.detect_pii(text)
@@ -165,7 +169,14 @@ class PIIDetector:
             for detection in detections:
                 value = detection["value"]
                 pii_type = detection["type"]
-                replacement = f"[{pii_type.upper()}_REDACTED]"
+                
+                # Use short labels as requested
+                label_map = {
+                    "index": "[INDEX]",
+                    "pesel": "[PESEL]",
+                    "email": "[MAIL]"
+                }
+                replacement = label_map.get(pii_type, f"[{pii_type.upper()}]")
                 sanitized = sanitized.replace(value, replacement)
         
         return sanitized

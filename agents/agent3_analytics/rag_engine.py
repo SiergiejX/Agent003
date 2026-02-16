@@ -71,9 +71,9 @@ class RAGEngine:
                 "weight": 0.9
             },
             "a3_analytics_queries_history": {
-                "description": "Historia zapytań analitycznych z wynikami",
-                "keywords": ["zapytanie", "pytanie", "query", "historia analiz"],
-                "weight": 0.6
+                "description": "Historia zapytań analitycznych z wynikami i statystykami PII",
+                "keywords": ["zapytanie", "pytanie", "query", "historia analiz", "dane wrażliwe", "pii", "index", "pesel", "mail", "email", "próby", "ile", "liczba prób", "statystyki bezpieczeństwa", "wykryto"],
+                "weight": 0.9
             }
         }
     
@@ -137,7 +137,8 @@ class RAGEngine:
                 "a3_academic_events",
                 "a3_retention_cohorts",
                 "a3_support_interactions_summary",
-                "a3_course_performance"
+                "a3_course_performance",
+                "a3_analytics_queries_history"  # Always include for context
             ]
         
         # Sort by score and return top_k
@@ -255,6 +256,11 @@ class RAGEngine:
             print(f"[RAG] Auto-selecting collections...")
             collections = self.select_collections(query, top_k=5)
             print(f"[RAG] Auto-selected: {collections}")
+        
+        # ALWAYS include analytics_queries_history for context
+        if "a3_analytics_queries_history" not in collections:
+            collections.append("a3_analytics_queries_history")
+            print(f"[RAG] Added a3_analytics_queries_history (always included)")
         
         # Search each collection
         all_results = {}
@@ -431,14 +437,21 @@ class RAGEngine:
 """
         
         elif collection_name == "a3_analytics_queries_history":
+            pii_info = payload.get('pii_info', {})
+            pii_detected = pii_info.get('pii_detected', False)
+            pii_types = pii_info.get('pii_types', [])
+            
             return f"""
-- Zapytanie: {payload.get('query_text', 'N/A')}
-- Data: {payload.get('created_at', 'N/A')}
-- Intent: {payload.get('intent', 'N/A')}
-- Tagi: {', '.join(payload.get('topic_tags', []))}
-- Zakres: {payload.get('scope', 'N/A')}
-- Streszczenie odpowiedzi: {payload.get('answer_summary', '')[:150]}...
-- Pewność: {payload.get('confidence_score', 'N/A')}
+- Data: {payload.get('timestamp', 'N/A')}
+- Kategoria: {payload.get('query_category', 'N/A')}
+- Zapytanie: {payload.get('query', 'N/A')[:200]}
+- Odpowiedź: {payload.get('answer', 'N/A')[:200]}
+- Czas odpowiedzi: {payload.get('response_time_sec', 'N/A')}s
+- Model: {payload.get('model', 'N/A')}
+- Dane wrażliwe wykryte: {'TAK' if pii_detected else 'NIE'}
+- Typy PII: {', '.join(pii_types) if pii_types else 'brak'}
+- Zapytanie oczyszczone: {'TAK' if pii_info.get('query_sanitized', False) else 'NIE'}
+- Źródła danych: {', '.join(payload.get('analytics_context', {}).get('analyzed_collections', []))}
 """
         
         else:
