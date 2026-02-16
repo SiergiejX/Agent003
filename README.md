@@ -44,34 +44,48 @@ Poniżej opisano docelowe kolekcje dla analiz trendów i danych o studentach.
 
 ## Kolekcje Qdrant wykorzystywane przez agent3 (proponowane)
 
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| Kolekcja                      | Przeznaczenie                            | Przykładowe pola                                             | Typowe pytania                                               |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_student_profiles_snapshot  | Snapshoty profili studentów (segmentacja)| student_hash, snapshot_date, faculty_id, program_id, status, | Jaki jest profil studentów odpadających po 1 semestrze?      |
-|                               |                                          | gpa, ects_completed, failed_courses_count, risk_score         |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_academic_events            | Oś czasu zdarzeń akademickich            | event_type, event_date, student_hash, faculty_id, program_id,| Co najczęściej poprzedza skreślenie?                         |
-|                               |                                          | reason_code                                                  |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_course_performance         | Wyniki w przedmiotach                    | course_id, term, attempt_no, final_grade, passed, ects        | Które przedmioty generują najwięcej niezaliczeń?             |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_retention_cohorts          | Kohorty i retencja (agregaty)            | entry_year, cohort_size, retention_1_sem, retention_1_year,   | Jak zmieniła się retencja na kierunku X w 3 lata?            |
-|                               |                                          | dropout_rate                                                 |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_support_interactions_summary| Ticketing (sygnały problemów)           | ticket_id_hash, student_hash, category, priority, resolved,   | Czy wzrost ticketów o opłatach koreluje ze skreśleniami?     |
-|                               |                                          | resolution_time                                              |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_policies_and_rules_analytics| Regulaminy / procedury jako kontekst    | doc_type, topic, effective_from, version                      | Czy zmiana regulaminu wpływa na trend urlopów?               |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_reports_and_insights       | Raporty i wnioski agenta3                | report_id, period_start, period_end, scope, kpi_tags,         | Co było kluczowym problemem w semestrze 2024Z?               |
-|                               |                                          | confidence                                                   |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_metrics_timeseries         | Szeregi czasowe KPI                      | metric_name, granularity, period_from, period_to, values,     | Jak wygląda trend skreśleń miesiąc do miesiąca?              |
-|                               |                                          | units                                                        |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
-| a3_analytics_queries_history  | Historia zapytań i odpowiedzi            | query_text, intent, filters_used, collections_used,           | Czy już analizowaliśmy podobny przypadek?                    |
-|                               |                                          | answer_summary                                               |                                                              |
-+-------------------------------+------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+
+## Kolekcje Qdrant wykorzystywane przez agent3 (proponowane)
+
+```text
++------------------------------+------------------------------+------------------------------+------------------------------+
+| Kolekcja                     | Przeznaczenie                | Przykładowe pola             | Typowe pytania               |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_student_profiles_snapshot | Snapshoty profili studentów  | student_hash, snapshot_date, | Profil studentów odpadających|
+|                              | (segmentacja)                | faculty_id, program_id,      | po 1 semestrze?              |
+|                              |                              | status, gpa, ects_completed,  |                              |
+|                              |                              | failed_courses_count,        |                              |
+|                              |                              | risk_score                   |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_academic_events           | Oś czasu zdarzeń             | event_type, event_date,      | Co poprzedza skreślenie?     |
+|                              | akademickich                 | student_hash, faculty_id,    |                              |
+|                              |                              | program_id, reason_code      |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_course_performance        | Wyniki w przedmiotach        | course_id, term, attempt_no, | Które przedmioty generują    |
+|                              |                              | final_grade, passed, ects     | najwięcej niezaliczeń?       |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_retention_cohorts         | Kohorty i retencja           | entry_year, cohort_size,     | Retencja kierunku X w 3 lata?|
+|                              | (agregaty)                   | retention_1_sem,             |                              |
+|                              |                              | retention_1_year, dropout_rate|                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_support_interactions_sum  | Ticketing (sygnały problemów) | ticket_id_hash, student_hash,| Czy tickety o opłatach       |
+|                              |                              | category, priority, resolved,| korelują ze skreśleniami?    |
+|                              |                              | resolution_time              |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_policies_and_rules_analyt | Regulaminy / procedury       | doc_type, topic,             | Czy zmiana regulaminu wpływa |
+|                              | jako kontekst                | effective_from, version      | na trend urlopów?            |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_reports_and_insights      | Raporty i wnioski agent3      | report_id, period_start,     | Kluczowy problem w semestrze |
+|                              |                              | period_end, scope, kpi_tags, | 2024Z?                       |
+|                              |                              | confidence                   |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_metrics_timeseries        | Szeregi czasowe KPI          | metric_name, granularity,    | Trend skreśleń miesiąc do    |
+|                              |                              | period_from, period_to,      | miesiąca?                    |
+|                              |                              | values, units                |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
+| a3_analytics_queries_history | Historia zapytań i odpowiedzi| query_text, intent,          | Czy już analizowaliśmy       |
+|                              |                              | filters_used, collections_used,| podobny przypadek?         |
+|                              |                              | answer_summary               |                              |
++------------------------------+------------------------------+------------------------------+------------------------------+
 
 
 ## Przykład działania
