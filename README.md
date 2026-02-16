@@ -20,7 +20,7 @@ Repozytorium dokumentuje agenta **agent3_analytics** – analityczną część w
 - **Input:** pojedyncze zapytanie tekstowe (prompt) w języku naturalnym.
 - **Output:** odpowiedź analityczna (lub odmowa / informacja o braku danych / informacja o wyjściu poza zakres kompetencji).
 
-## Przepływ (BPMN – skrót)
+## Przepływ (BPMN)
 1. **Analityk** wpisuje zapytanie.
 2. **Filtr** ocenia, czy zapytanie wymaga sanityzacji i/lub zawiera treści niedozwolone.
 3. Jeśli potrzeba: zapytanie trafia do **agent5_security** (sanityzacja/odmowa).
@@ -41,10 +41,6 @@ Agent3 korzysta z kolekcji Qdrant, które dzielą się na 3 grupy:
 
 ## Kolekcje Qdrant wykorzystywane przez agent3 (proponowane)
 Poniżej opisano docelowe kolekcje dla analiz trendów i danych o studentach.
-
-## Kolekcje Qdrant wykorzystywane przez agent3 (proponowane)
-
-## Kolekcje Qdrant wykorzystywane przez agent3 (proponowane)
 
 ```text
 +------------------------------+------------------------------+------------------------------+------------------------------+
@@ -86,7 +82,7 @@ Poniżej opisano docelowe kolekcje dla analiz trendów i danych o studentach.
 |                              |                              | filters_used, collections_used,| podobny przypadek?         |
 |                              |                              | answer_summary               |                              |
 +------------------------------+------------------------------+------------------------------+------------------------------+
-
+text```
 
 ## Przykład działania
 Zapytanie: **„Ile było zgłoszeń o rezygnacji ze studiów?”**
