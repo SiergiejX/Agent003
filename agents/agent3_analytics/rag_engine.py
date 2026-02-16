@@ -29,59 +29,50 @@ class RAGEngine:
         
         # Collection mappings with descriptions for better routing
         self.collections_config = {
-            "a3_conversations_anon": {
-                "description": "Kompletne rozmowy z chatbotem z metadanymi (intent, czas, CSAT)",
-                "keywords": ["rozmowa", "konwersacja", "chat", "sesja", "intent", "temat"],
+            # Academic analytics collections
+            "a3_student_profiles_snapshot": {
+                "description": "Snapshoty profili studentów - segmentacja i porównania",
+                "keywords": ["student", "profil", "gpa", "stypendium", "rok studiów", "kierunek", "wydział"],
                 "weight": 1.0
             },
-            "a3_messages_anon": {
-                "description": "Pojedyncze wiadomości w rozmowach",
-                "keywords": ["wiadomo", "message", "wypowied", "pytanie", "odpowied"],
-                "weight": 0.8
+            "a3_academic_events": {
+                "description": "Zdarzenia akademickie - skreślenia, urlopy, ukończenia",
+                "keywords": ["skreśleni", "urlop", "ukończeni", "enrollment", "dropout", "graduation", "absolwent", "zdarzeni"],
+                "weight": 1.0
             },
-            "a3_events": {
-                "description": "Zdarzenia systemu (retrieval, handoff, błędy)",
-                "keywords": ["zdarzeni", "event", "retrieval", "score", "podobień", "dokument"],
+            "a3_course_performance": {
+                "description": "Wyniki studentów na poziomie przedmiotów",
+                "keywords": ["przedmiot", "kurs", "ocena", "zaliczeni", "egzamin", "niezaliczeni"],
                 "weight": 0.9
             },
-            "a3_handoff_cases_anon": {
-                "description": "Przypadki eskalacji do człowieka",
-                "keywords": ["eskalacj", "handoff", "człowiek", "operator", "przekazan"],
+            "a3_retention_cohorts": {
+                "description": "Kohorty i wskaźniki retencji studentów",
+                "keywords": ["retencja", "kohorta", "rocznik", "wskaźnik ukończen", "utrzymani"],
                 "weight": 1.0
             },
-            "a3_failures_anon": {
-                "description": "Błędy techniczne systemu",
-                "keywords": ["błąd", "error", "failure", "awaria", "problem techniczny"],
+            "a3_support_interactions_summary": {
+                "description": "Podsumowania zgłoszeń studentów z systemu ticketowego",
+                "keywords": ["zgłoszeni", "ticket", "problem", "wsparcie", "pomoc", "eskalacj"],
                 "weight": 0.9
             },
-            "a3_feedback_anon": {
-                "description": "Feedback użytkowników (CSAT, sentiment)",
-                "keywords": ["feedback", "csat", "satysfakcja", "opinia", "ocena", "sentiment"],
-                "weight": 1.0
-            },
-            "a3_intent_catalog": {
-                "description": "Katalog intentów/tematów obsługiwanych przez chatbot",
-                "keywords": ["intent", "katalog", "kategoria", "typ zapyta"],
+            "a3_policies_and_rules_analytics": {
+                "description": "Regulaminy i procedury akademickie",
+                "keywords": ["regulamin", "procedura", "zasady", "przepisy", "zarządzeni"],
                 "weight": 0.7
             },
-            "a3_sentiment_events": {
-                "description": "Zdarzenia związane z sentymentem",
-                "keywords": ["sentiment", "emocj", "nastrój", "negatyw", "pozytyw"],
+            "a3_reports_and_insights": {
+                "description": "Raporty i analizy wygenerowane przez Agent3",
+                "keywords": ["raport", "analiza", "insight", "rekomendacja", "wnioski"],
                 "weight": 0.8
             },
-            "a3_ticket_metrics_anon": {
-                "description": "Metryki ticketów/zgłoszeń",
-                "keywords": ["ticket", "zgłoszeni", "metryki", "czas reakcji", "czas rozwiązani"],
+            "a3_metrics_timeseries": {
+                "description": "Szeregi czasowe metryk akademickich",
+                "keywords": ["trend", "zmiana", "czas", "miesięczn", "roczn", "wykres"],
                 "weight": 0.9
             },
-            "a3_suggestions": {
-                "description": "Sugestie ulepszeń systemu",
-                "keywords": ["sugestia", "rekomendacja", "ulepszeni", "poprawa", "usprawni"],
-                "weight": 0.8
-            },
-            "a3_analytics": {
-                "description": "Historia zapytań analitycznych i odpowiedzi",
-                "keywords": ["analiza", "raport", "pytanie", "zapytanie analityczne"],
+            "a3_analytics_queries_history": {
+                "description": "Historia zapytań analitycznych z wynikami",
+                "keywords": ["zapytanie", "pytanie", "query", "historia analiz"],
                 "weight": 0.6
             }
         }
@@ -142,11 +133,11 @@ class RAGEngine:
         # If no keyword matches, use all major collections
         if not scores:
             return [
-                "a3_conversations_anon",
-                "a3_events",
-                "a3_handoff_cases_anon",
-                "a3_feedback_anon",
-                "a3_failures_anon"
+                "a3_student_profiles_snapshot",
+                "a3_academic_events",
+                "a3_retention_cohorts",
+                "a3_support_interactions_summary",
+                "a3_course_performance"
             ]
         
         # Sort by score and return top_k
@@ -283,8 +274,8 @@ class RAGEngine:
     def format_context_for_llm(
         self,
         search_results: Dict[str, List[Dict[str, Any]]],
-        max_results_per_collection: int = 5,
-        max_total_tokens: int = 3000
+        max_results_per_collection: int = 2,  # Reduced from 3
+        max_total_tokens: int = 1200  # Reduced from 2000 to fit in 4096 context with prompt overhead
     ) -> str:
         """
         Format search results into context string for LLM.
@@ -346,71 +337,114 @@ class RAGEngine:
     def _format_payload(self, collection_name: str, payload: Dict[str, Any], score: float) -> str:
         """Format payload based on collection type."""
         
-        if collection_name == "a3_conversations_anon":
+        if collection_name == "a3_student_profiles_snapshot":
             return f"""
-- Intent: {payload.get('intent', 'UNKNOWN')}
-- Data: {payload.get('timestamp', 'N/A')}
-- Czas trwania: {payload.get('duration_min', 0):.1f} min
-- Status: {'Rozwiązana' if payload.get('resolved', False) else 'Nierozwiązana'}
-- CSAT: {payload.get('csat_score', 'N/A')}
-- Handoff: {'Tak' if payload.get('handoff_to_human', False) else 'Nie'}
-- Kontekst: {payload.get('summary', payload.get('context', 'Brak opisu'))}
+- Student hash: {payload.get('student_hash', 'N/A')}
+- Rok akademicki: {payload.get('academic_year', 'N/A')}
+- Kierunek: {payload.get('program_id', 'N/A')} (Wydział: {payload.get('faculty_id', 'N/A')})
+- Rok studiów: {payload.get('year_of_study', 'N/A')}, Tryb: {payload.get('mode', 'N/A')}
+- Status: {payload.get('status', 'N/A')}
+- GPA: {payload.get('gpa', 'N/A')}, ECTS: {payload.get('ects_completed', 0)}/{payload.get('ects_expected', 180)}
+- Niezaliczenia: {payload.get('failed_courses_count', 0)}
+- Ryzyko odejścia: {payload.get('withdrawal_risk_score', 'N/A')}
+- Stypendium: {'Tak' if payload.get('scholarship_flag') else 'Nie'}
 """
         
-        elif collection_name == "a3_events":
+        elif collection_name == "a3_academic_events":
             return f"""
 - Typ zdarzenia: {payload.get('event_type', 'UNKNOWN')}
-- Conversation ID: {payload.get('conversation_id_anon', 'N/A')}
-- Retrieval score: {payload.get('retrieval_top_score', 'N/A')}
-- Dokumenty: {payload.get('retrieved_docs_count', 0)}
-- Szczegóły: {payload.get('details', payload.get('context', 'Brak'))}
+- Data: {payload.get('event_date', 'N/A')}
+- Rok akademicki: {payload.get('academic_year', 'N/A')}, Semestr: {payload.get('semester', 'N/A')}
+- Kierunek: {payload.get('program_id', 'N/A')} (Wydział: {payload.get('faculty_id', 'N/A')})
+- Powód: {payload.get('reason_text', payload.get('reason_code', 'Brak'))}
+- Waga: {payload.get('severity', 'N/A')}
 """
         
-        elif collection_name == "a3_handoff_cases_anon":
+        elif collection_name == "a3_course_performance":
             return f"""
-- Powód eskalacji: {payload.get('handoff_reason', 'UNKNOWN')}
+- Przedmiot: {payload.get('course_name', 'N/A')} (ID: {payload.get('course_id', 'N/A')})
+- Kierunek: {payload.get('program_id', 'N/A')} (Wydział: {payload.get('faculty_id', 'N/A')})
+- Termin: {payload.get('term', 'N/A')}
+- Próba: {payload.get('attempt_no', 1)}
+- Ocena: {payload.get('final_grade', 'N/A')}, Zaliczony: {'Tak' if payload.get('passed') else 'Nie'}
+- ECTS: {payload.get('ects', 'N/A')}
+- Typ: {payload.get('exam_type', 'N/A')}, Kategoria: {payload.get('course_category', 'N/A')}
+"""
+        
+        elif collection_name == "a3_retention_cohorts":
+            retention_1_sem = payload.get('retention_1_sem', 0)
+            retention_2_sem = payload.get('retention_2_sem', 0)
+            retention_1_year = payload.get('retention_1_year', 0)
+            graduation_rate = payload.get('graduation_rate', 0)
+            
+            return f"""
+- Kohorta: {payload.get('cohort_id', 'N/A')}
+- Rok wejścia: {payload.get('entry_year', 'N/A')}
+- Kierunek: {payload.get('program_id', 'N/A')} (Wydział: {payload.get('faculty_id', 'N/A')})
+- Tryb: {payload.get('mode', 'N/A')}, Stopień: {payload.get('level', 'N/A')}
+- Wielkość kohorty: {payload.get('cohort_size', 'N/A')}
+- Retencja (1 sem/2 sem/1 rok): {retention_1_sem*100:.1f}% / {retention_2_sem*100:.1f}% / {retention_1_year*100:.1f}%
+- Wskaźnik ukończenia: {graduation_rate*100:.1f}%
+- Średnie GPA: {payload.get('avg_gpa', 'N/A')}
+"""
+        
+        elif collection_name == "a3_support_interactions_summary":
+            return f"""
+- Ticket hash: {payload.get('ticket_id_hash', 'N/A')}
+- Data: {payload.get('created_at', 'N/A')}
+- Kategoria: {payload.get('category', 'N/A')} / {payload.get('subcategory', 'N/A')}
+- Sentiment: {payload.get('sentiment', 'N/A')}
+- Priorytet: {payload.get('priority', 'N/A')}
+- Rozwiązany: {'Tak' if payload.get('resolved') else 'Nie'}
+- Czas rozwiązania: {payload.get('resolution_time_hours', 'N/A')} godz.
+"""
+        
+        elif collection_name == "a3_policies_and_rules_analytics":
+            return f"""
+- Typ dokumentu: {payload.get('doc_type', 'N/A')}
+- Temat: {payload.get('topic', 'N/A')}
+- Obowiązuje od: {payload.get('effective_from', 'N/A')}
+- Obowiązuje do: {payload.get('effective_to', 'obecnie')}
+- Wersja: {payload.get('version', 'N/A')}
+- Źródło: {payload.get('source', 'N/A')}
+"""
+        
+        elif collection_name == "a3_reports_and_insights":
+            return f"""
+- Raport ID: {payload.get('report_id', 'N/A')}
+- Data utworzenia: {payload.get('created_at', 'N/A')}
+- Zakres: {payload.get('scope', 'N/A')}
+- Okres: {payload.get('period_start', 'N/A')} - {payload.get('period_end', 'N/A')}
+- Tagi KPI: {', '.join(payload.get('kpi_tags', []))}
+- Pewność: {payload.get('confidence_score', 'N/A')}
+- Źródła danych: {', '.join(payload.get('data_sources', []))}
+"""
+        
+        elif collection_name == "a3_metrics_timeseries":
+            return f"""
+- Metryka: {payload.get('metric_name', 'N/A')}
+- Zakres: {payload.get('scope', 'N/A')}
+- Granularność: {payload.get('granularity', 'N/A')}
+- Okres: {payload.get('period_from', 'N/A')} - {payload.get('period_to', 'N/A')}
+- Jednostki: {payload.get('units', 'N/A')}
+- Wartości: {payload.get('values', [])}
+"""
+        
+        elif collection_name == "a3_analytics_queries_history":
+            return f"""
+- Zapytanie: {payload.get('query_text', 'N/A')}
+- Data: {payload.get('created_at', 'N/A')}
 - Intent: {payload.get('intent', 'N/A')}
-- Data: {payload.get('timestamp', 'N/A')}
-- Czas oczekiwania: {payload.get('wait_time_min', 0):.1f} min
-- Kontekst: {payload.get('context', payload.get('summary', 'Brak opisu'))}
-"""
-        
-        elif collection_name == "a3_feedback_anon":
-            return f"""
-- CSAT score: {payload.get('csat_score', 'N/A')}
-- Sentiment: {payload.get('sentiment_score', 'N/A')}
-- Intent: {payload.get('intent', 'N/A')}
-- Komentarz: {payload.get('feedback_text', payload.get('comment', 'Brak'))}
-"""
-        
-        elif collection_name == "a3_failures_anon":
-            return f"""
-- Typ błędu: {payload.get('error_type', 'UNKNOWN')}
-- Komponent: {payload.get('component', 'N/A')}
-- Data: {payload.get('timestamp', 'N/A')}
-- Opis: {payload.get('error_message', payload.get('details', 'Brak opisu'))}
-"""
-        
-        elif collection_name == "a3_intent_catalog":
-            return f"""
-- Intent: {payload.get('intent_name', 'UNKNOWN')}
-- Kategoria: {payload.get('category', 'N/A')}
-- Opis: {payload.get('description', 'Brak opisu')}
-- Przykłady: {payload.get('examples', [])}
-"""
-        
-        elif collection_name == "a3_analytics":
-            return f"""
-- Zapytanie: {payload.get('query', 'N/A')}
-- Kategoria: {payload.get('query_category', 'N/A')}
-- Odpowiedź: {payload.get('answer', '')[:200]}...
-- Czas odpowiedzi: {payload.get('response_time_sec', 'N/A')}s
-- Jakość: {payload.get('quality_flags', {})}
+- Tagi: {', '.join(payload.get('topic_tags', []))}
+- Zakres: {payload.get('scope', 'N/A')}
+- Streszczenie odpowiedzi: {payload.get('answer_summary', '')[:150]}...
+- Pewność: {payload.get('confidence_score', 'N/A')}
 """
         
         else:
-            # Generic format
-            important_keys = ['intent', 'timestamp', 'context', 'summary', 'description', 'value', 'count']
+            # Generic format for unknown collections
+            important_keys = ['student_hash', 'event_type', 'timestamp', 'created_at', 'context', 
+                            'summary', 'description', 'value', 'count', 'program_id', 'faculty_id']
             lines = []
             for key in important_keys:
                 if key in payload:
@@ -488,10 +522,11 @@ class RAGEngine:
         # Add conversation history if provided
         history_context = ""
         if conversation_history and len(conversation_history) > 1:
-            # Include last 5 exchanges maximum
-            recent_history = conversation_history[-10:]  # Last 5 user-assistant pairs
-            history_context = "\n\nHISTORIA KONWERSACJI:\n" + "\n".join(recent_history) + "\n"
-            print(f"[RAG PIPELINE] Including {len(recent_history)} messages from conversation history")
+            # Include last 2 exchanges maximum - limit to 300 chars total to prevent context overflow
+            recent_history = conversation_history[-3:]  # Last 1-2 pairs
+            history_text = "\n".join(recent_history)[:300]  # Max 300 chars
+            history_context = f"\n\nHISTORIA (ostatnie wiadomości):\n{history_text}\n"
+            print(f"[RAG PIPELINE] Including {len(recent_history)} messages from conversation history ({len(history_text)} chars)")
         
         augmented_prompt = f"""{system_prompt}
 
@@ -501,13 +536,15 @@ ZAPYTANIE UŻYTKOWNIKA:
 {query}
 
 INSTRUKCJE:
+⚠️ ODPOWIADAJ WYŁĄCZNIE PO POLSKU! Nigdy nie używaj angielskiego ani innych języków.
 1. Jeśli to pytanie kontynuuje poprzednią rozmowę, uwzględnij kontekst historii
 2. Odpowiedz WYŁĄCZNIE na podstawie powyższych danych ze źródeł
 3. Cytuj konkretne liczby i metryki z danych
 4. Wskaż źródło informacji (nazwę kolekcji)
-5. Jeśli danych nie ma w kontekście, wyraźnie to powiedź
+5. Jeśli danych nie ma w kontekście, wyraźnie to powiedź PO POLSKU
 6. NIE wymyślaj danych - używaj tylko tego co zostało znalezione
 7. Format odpowiedzi dostosuj do typu zapytania (tabela, lista, paragraf)
+8. Cała odpowiedź musi być w języku POLSKIM
 """
         print(f"[RAG PIPELINE] STEP 3: Prompt built, length: {len(augmented_prompt)} chars")
         

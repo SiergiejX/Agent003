@@ -1,66 +1,91 @@
-# Node / Python
+# Backupy i wersje alternatywne
+app_backup_*.py
+app_optimized.py
+
+# Skrypty testowe i diagnostyczne
+test_*.py
+test_*.ps1
+check_*.py
+debug_*.py
+verify_*.py
+quick_test.py
+
+# Skrypty do zarządzania danymi i setup
+add_data.bat
+add_extended_data.bat
+add_extended_data.py
+add_extended_data_optimized.py
+reload_data.bat
+cleanup_*.bat
+setup_*.bat
+generate_data.py
+load_sample_data.py
+load_missing_data.py
+load_new_collections_data.py
+init_collections.py
+create_new_collections.py
+export_*.py
+import_*.py
+report_*.py
+few_shot_learning.py
+analyze_categories.py
+
+# Dokumentacja rozwojowa
+DEBUG_TIMEOUT_ISSUE.md
+IMPLEMENTATION_SUMMARY.md
+OPTIMIZATION_SUMMARY.md
+QUERY_HISTORY_DOCS.md
+TRAINING_GUIDE.md
+AGENT3_PROMPT_GUIDE.md
+NEW_COLLECTIONS_README.md
+PII_DETECTION_GUIDE.md
+CLEANUP_SUMMARY.md
+
+# Backupy danych i archiwa
+qdrant_backup_local_*/
+qdrant_backup_*/
+qdrant_export/
+_archive_*/
+*_archive_*/
+
+# Pliki tymczasowe Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.env
-*.venv
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Docker
-**/docker-compose.override.yml
-**/volumes/
-**/tmp/
-**/data/
-**/cache/
+# Środowisko wirtualne
+venv/
+env/
+ENV/
+.venv/
 
-# Ollama / AnythingLLM / modele
-ollama/models/
-*.bin
-*.pt
-*.ckpt
-
-# Qdrant / wektory / bazy
-qdrant/data/
-qdrant/backups/
-
-# VS Code
+# IDE i edytory
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
-# system Windows
-Thumbs.db
-Desktop.ini
-agents/agent3_analytics/init_collections.py
-agents/agent3_analytics/load_sample_data.py
-agents/agent3_analytics/AGENT3_PROMPT_GUIDE.md
-.gitignore
-.gitignore
-agents/agent3_analytics/IMPLEMENTATION_SUMMARY.md
-agents/agent3_analytics/test_agent3_analytics.ps1
-agents/agent3_analytics/add_data.bat
-agents/agent3_analytics/generate_data.py
-agents/agent3_analytics/reload_data.bat
-agents/agent3_analytics/add_extended_data.bat
-agents/agent3_analytics/add_extended_data.py
-agents/agent3_analytics/add_extended_data_optimized.py
-agents/agent3_analytics/check_combined_metrics.py
-agents/agent3_analytics/test_analytics.py
-agents/agent3_analytics/verify_analytics.py
-agents/agent3_analytics/report_final.py
-agents/agent3_analytics/test_query.py
-agents/agent3_analytics/load_missing_data.py
-agents/agent3_analytics/QUERY_HISTORY_DOCS.md
-agents/agent3_analytics/test_analytics_history.py
-agents/agent3_analytics/check_saved_queries.py
-agents/agent3_analytics/test_single_query.py
-agents/agent3_analytics/export_training_data.py
-agents/agent3_analytics/few_shot_learning.py
-agents/agent3_analytics/TRAINING_GUIDE.md
-agents/agent3_analytics/app_backup_20260215_171633.py
-agents/agent3_analytics/test_rag.py
-agents/agent3_analytics/quick_test.py
-.gitignore
-agents/agent3_analytics/debug_rag_data.py
-agents/agent3_analytics/OPTIMIZATION_SUMMARY.md
-agents/agent3_analytics/test_internal.py
-agents/agent3_analytics/DEBUG_TIMEOUT_ISSUE.md
-.gitignore
+# Logi
+*.log
+
+# Pliki tymczasowe i eksporty
+*.tmp
+*.temp
+*.bak
+*.swp
+dump.rdb
+
+# Pliki konfiguracyjne setupu
+colections_setup

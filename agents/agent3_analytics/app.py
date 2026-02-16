@@ -17,6 +17,7 @@ from qdrant_client.models import PointStruct
 import urllib.request
 
 from rag_engine import RAGEngine
+from pii_detector import PIIDetector
 
 # ============================================================================
 # CONFIGURATION
@@ -25,33 +26,60 @@ from rag_engine import RAGEngine
 app = FastAPI(title="Agent3 Analytics", version="2.0.0")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b")
+CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3:latest")
 EMBEDDING_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 
-AGENT3_SYSTEM_PROMPT = """Jesteś zaawansowanym agentem analitycznym (Agent 3) odpowiedzialnym za usprawnianie działania chatbotów BOS.
+AGENT3_SYSTEM_PROMPT = """Jesteś zaawansowanym agentem analitycznym (Agent 3) odpowiedzialnym za usprawnianie działania systemów uczelni wyższej.
 
-DOSTĘPNE DANE (zanonimizowane, ostatnie 7 dni):
+⚠️ WAŻNE: ODPOWIADAJ ZAWSZE PO POLSKU! Wszystkie odpowiedzi muszą być w języku polskim.
+
+KONTEKST: Jesteś częścią systemu dla uczelni wyższej. Analizujesz:
+1. CHATBOTA STUDENCKIEGO (BOS) - rozmowy, intenty, eskalacje, CSAT
+2. DANE AKADEMICKIE - profile studentów, zdarzenia, kursy, retencja, kohorty
+3. SUPPORT - zgłoszenia, tickety, problemy studentów
+4. REGULAMINY - procedury, zasady, przepisy akademickie
+
+DOSTĘPNE DANE (zanonimizowane):
+CHATBOT:
 - rozmowy z chatbotem (intent, czas, CSAT, status)
 - zdarzenia systemu (retrieval scores, handoffs)
 - eskalacje do człowieka z powodami
 - feedback użytkowników (CSAT, sentiment)
 - błędy techniczne
 
+AKADEMICKIE:
+- profile studentów (GPA, ECTS, stypendia, ryzyko odejścia)
+- zdarzenia akademickie (skreślenia, urlopy, ukończenia)
+- wyniki na przedmiotach (oceny, zaliczenia, trudne kursy)
+- kohorty i retencja (wskaźniki ukończenia, dropout)
+- szeregi czasowe metryk
+
+SUPPORT:
+- zgłoszenia studentów (kategorie, czas rozwiązania, sentiment)
+- eskalacje i problemy
+
 ZADANIA:
-1. Analizuj intenty (jakość, wzrosty, problemy)
-2. Identyfikuj przyczyny eskalacji
+1. Analizuj trendy i wzorce (chatbot, akademickie, support)
+2. Identyfikuj przyczyny problemów (eskalacje, skreślenia, niska retencja)
 3. Generuj konkretne rekomendacje ulepszeń
+4. Monitoruj jakość obsługi i satysfakcję studentów
+5. Wykrywaj grupy ryzyka (studenci zagrożeni skreśleniem)
 
 ZASADY:
-✅ Używaj TYLKO danych ze źródeł
-✅ Podawaj konkretne liczby i metryki
+✅ ODPOWIADAJ WYŁĄCZNIE PO POLSKU
+✅ Używaj TYLKO danych ze źródeł dostarczonych powyżej
+✅ Podawaj konkretne liczby i metryki ze źródeł
 ✅ Formatuj odpowiedzi czytelnie (tabele, listy)
-✅ Cytuj źródło informacji
+✅ Cytuj źródło informacji (nazwę kolekcji)
+✅ Jeśli brak danych - powiedz "Brak danych w źródłach"
 
-❌ NIE wymyślaj danych
-❌ NIE zgaduj metryk"""
+❌ NIE odpowiadaj po angielsku ani w innych językach
+❌ NIE wymyślaj danych spoza źródeł
+❌ NIE zgaduj metryk
+❌ NIE używaj wiedzy ogólnej - tylko dane ze źródeł
+❌ NIE używaj przykładów spoza kontekstu uczelni"""
 
 # ============================================================================
 # MODELS
@@ -77,9 +105,9 @@ llm = ChatOllama(
     base_url=OLLAMA_BASE_URL,
     timeout=180.0,
     temperature=0.2,
-    num_ctx=2048,  # Reduced from 4096 - GTX 1050 has only 4GB VRAM
-    num_gpu=1,  # Use 1 GPU (was -1 which forced CPU mode)
-    num_thread=4  # Reduced from 8 to avoid thread overhead
+    num_ctx=8192,  # Context window for RAG: system prompt + retrieved docs + history + response
+    num_gpu=-1,  # Hybrid mode: auto-distribute between GPU (4GB VRAM) and CPU (32GB RAM)
+    num_thread=8  # Increased to better utilize 32GB RAM on CPU
 )
 
 # Initialize Qdrant client
@@ -92,6 +120,10 @@ rag_engine = RAGEngine(
     embedding_model=EMBEDDING_MODEL
 )
 print("[AGENT3] ✓ Initialized RAG Engine")
+
+# Initialize PII Detector
+pii_detector = PIIDetector()
+print("[AGENT3] ✓ Initialized PII Detector")
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -259,11 +291,16 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
     """
     print(f"[AGENT3] ========== CHAT COMPLETIONS CALLED ==========", flush=True)
     
-    # Extract conversation history
+    # Extract conversation history - LIMIT to last 2 exchanges to prevent context overflow
     conversation_history = []
-    for msg in request.messages:
+    max_history_messages = 4  # Last 2 user-assistant pairs
+    for msg in request.messages[-max_history_messages:]:  # Only take last N messages
         if msg.role in ["user", "assistant", "system"]:
-            conversation_history.append(f"{msg.role.upper()}: {msg.content}")
+            # Truncate long messages to max 200 chars
+            content = msg.content[:200] if len(msg.content) > 200 else msg.content
+            conversation_history.append(f"{msg.role.upper()}: {content}")
+    
+    print(f"[AGENT3] Conversation history limited to {len(conversation_history)} messages (max {max_history_messages})")
     
     user_messages = [msg for msg in request.messages if msg.role == "user"]
     if not user_messages:
@@ -271,6 +308,47 @@ async def chat_completions(request: ChatCompletionRequest, authorization: Option
         return {"error": "No user message found"}
     
     query = user_messages[-1].content
+    
+    # ========================================================================
+    # PII DETECTION - Security check before processing
+    # ========================================================================
+    print(f"[AGENT3] Checking for PII in query...", flush=True)
+    pii_check = pii_detector.detect_pii(query)
+    
+    if pii_check["has_pii"]:
+        print(f"[AGENT3] ⚠️ PII DETECTED - Query blocked!", flush=True)
+        print(f"[AGENT3] Detected PII types: {[d['type'] for d in pii_check['detections']]}", flush=True)
+        
+        # Log sanitized query (with PII redacted)
+        sanitized_query = pii_detector.sanitize_text(query)
+        print(f"[AGENT3] Sanitized query: {sanitized_query}", flush=True)
+        
+        # Return warning to user
+        warning_response = pii_check["warning_message"]
+        
+        return {
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "agent3-analytics-rag",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": warning_response
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
+        }
+    
+    print(f"[AGENT3] ✓ No PII detected - proceeding with query", flush=True)
+    # ========================================================================
+    
     start_time = time.time()
     
     print(f"\n{'='*80}", flush=True)

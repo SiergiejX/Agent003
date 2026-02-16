@@ -23,6 +23,7 @@ echo "=== START SYSTEMU ==="
 start_compose "qdrant"
 start_compose "Open_WebUI"
 start_compose "nodered"
+start_compose "ollama"
 
 # Agenci
 start_compose "agents/agent1_student"
